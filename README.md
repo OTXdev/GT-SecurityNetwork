@@ -1,14 +1,14 @@
 # GT-SecurityNetwork
 
-## Create a Virtual Environment
+ Create a Virtual Environment
 ```bash
 python -m venv venv
 ```
-## Activate the VE
+ Activate the VE
 ```bash
 venv\Scripts\activate
 ```
-## Install from Requirements 
+Install from Requirements 
 ```bash
 pip install -r requirements.txt
 ```
