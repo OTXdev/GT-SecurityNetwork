@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import textwrap
 
 from game_model import Game, Node, Edge
 from nash_solver import compute_nash, NashResult
@@ -385,22 +386,36 @@ def _network_fig(game: Game, protected: list[str] | None = None,
     annotations = []
     for i, (icon, color, label) in enumerate(legend_items):
         annotations.append(dict(
-            x=0.01, y=1 - i * 0.065, xref="paper", yref="paper",
+            x=0.98, y=1 - i * 0.065, xref="paper", yref="paper",
             text=f'<span style="color:{color}">●</span>  {label}',
             showarrow=False, font=dict(size=11, color="#94a3b8"),
-            xanchor="left",
+            xanchor="right",
         ))
+
+    x_vals = [pos[nm][0] for nm in G.nodes]
+    y_vals = [pos[nm][1] for nm in G.nodes]
+    x_min, x_max = min(x_vals), max(x_vals)
+    y_min, y_max = min(y_vals), max(y_vals)
+    x_span = x_max - x_min if x_max != x_min else 1.0
+    y_span = y_max - y_min if y_max != y_min else 1.0
 
     _layout = dict(_PL)
     fig = go.Figure(data=traces)
     fig.update_layout(
         **_PL,
-        margin=dict(l=50, r=30, t=55, b=50),
+        margin=dict(l=40, r=40, t=65, b=40),
         annotations=annotations,
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        height=430,
-        title=dict(text="🕸️ Topologie du réseau", font=dict(size=15, color="#e2e8f0")),
+        xaxis=dict(
+            showgrid=False, zeroline=False, showticklabels=False,
+            range=[x_min - 0.25 * x_span, x_max + 0.25 * x_span]
+        ),
+        yaxis=dict(
+            showgrid=False, zeroline=False, showticklabels=False,
+            range=[y_min - 0.2 * y_span, y_max + 0.2 * y_span]
+        ),
+        height=450,
+        title=dict(text="🕸️ Topologie du réseau", font=dict(size=15, color="#e2e8f0"),
+                   x=0.5, xanchor="center"),
         hovermode="closest",
     )
     return fig
@@ -611,13 +626,13 @@ def _custom_game(nodes_json: str, dr: float, lf: float) -> Game:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
-    st.markdown("""
-    <div class="sb-logo">
-        <div style="font-size:2.2rem">🛡️</div>
-        <h2>GT-SecurityNet</h2>
-        <p>Game Theory · Network Security</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"""
+<div class="sb-logo">
+<div style="font-size:2.2rem">🛡️</div>
+<h2>GT-SecurityNet</h2>
+<p>Game Theory · Network Security</p>
+</div>
+""", unsafe_allow_html=True)
 
     # ── Scenario selector ────────────────────────────────────────────────────
     st.markdown("#### 🎮 Scénario")
@@ -804,15 +819,15 @@ with tab1:
     col_net, col_sim = st.columns([5, 3])
 
     with col_sim:
-        st.markdown("""
-        <div class="card blue">
-            <b>🎮 Simulateur d'attaque</b>
-            <p style="color:#64748b;font-size:.88rem;margin:.4rem 0 0">
-            Choisissez un nœud attaqué et une action de défense pour voir
-            l'impact et le payoff en temps réel.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""
+<div class="card blue">
+<b>🎮 Simulateur d'attaque</b>
+<p style="color:#64748b;font-size:.88rem;margin:.4rem 0 0">
+Choisissez un nœud attaqué et une action de défense pour voir
+l'impact et le payoff en temps réel.
+</p>
+</div>
+""", unsafe_allow_html=True)
 
         node_names   = [n.name for n in game.nodes]
         node_sim     = st.selectbox("⚔️ Nœud attaqué", ["(aucun)"] + node_names, key="sim_node")
@@ -848,13 +863,13 @@ with tab1:
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.markdown("""
-            <div class="card">
-                <p style="color:#475569;font-size:.88rem;margin:0">
-                👆 Sélectionnez un nœud et une action pour lancer la simulation.
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""
+<div class="card">
+<p style="color:#475569;font-size:.88rem;margin:0">
+👆 Sélectionnez un nœud et une action pour lancer la simulation.
+</p>
+</div>
+""", unsafe_allow_html=True)
 
     with col_net:
         fig_net = _network_fig(game, protected=protected_sim, attacked=attacked_sim)
@@ -892,14 +907,14 @@ with tab2:
     with col_toggle:
         mode = st.radio("Vue", ["Défenseur", "Attaquant"], horizontal=False, key="matrix_mode")
     with col_info:
-        st.markdown("""
-        <div class="card blue">
-            La <b>matrice de payoff</b> représente l'utilité pour chaque combinaison
-            <em>(action de défense, nœud ciblé)</em>.<br>
-            🟩 <b>Vert</b> → bon pour le défenseur &nbsp;|&nbsp;
-            🟥 <b>Rouge</b> → perte élevée pour le défenseur.
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""
+<div class="card blue">
+La <b>matrice de payoff</b> représente l'utilité pour chaque combinaison
+<em>(action de défense, nœud ciblé)</em>.<br>
+🟩 <b>Vert</b> → bon pour le défenseur &nbsp;|&nbsp;
+🟥 <b>Rouge</b> → perte élevée pour le défenseur.
+</div>
+""", unsafe_allow_html=True)
 
     if mode == "Défenseur":
         mat   = M_def
@@ -934,15 +949,15 @@ with tab3:
     st.markdown('<div class="sec-title">🎯 Équilibre de Nash — Stratégies Mixtes</div>',
                 unsafe_allow_html=True)
 
-    st.markdown("""
-    <div class="card purple">
-        <b>🎯 Principe de l'équilibre de Nash</b><br>
-        Dans un équilibre de Nash en <b>stratégies mixtes</b>, aucun joueur ne peut
-        augmenter son espérance de gain en changeant <em>unilatéralement</em> sa stratégie.
-        Les deux joueurs décident <b>simultanément</b> et de façon aléatoire.
-        Ce Nash est calculé par <b>Programmation Linéaire (minimax — von Neumann 1928)</b>.
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"""
+<div class="card purple">
+<b>🎯 Principe de l'équilibre de Nash</b><br>
+Dans un équilibre de Nash en <b>stratégies mixtes</b>, aucun joueur ne peut
+augmenter son espérance de gain en changeant <em>unilatéralement</em> sa stratégie.
+Les deux joueurs décident <b>simultanément</b> et de façon aléatoire.
+Ce Nash est calculé par <b>Programmation Linéaire (minimax — von Neumann 1928)</b>.
+</div>
+""", unsafe_allow_html=True)
 
     # Metrics
     nash_def_exp = float(nash.defender_strategy @ M_def @ nash.attacker_strategy)
@@ -976,18 +991,18 @@ with tab3:
     top_def_i = int(np.argmax(nash.defender_strategy))
     top_att_j = int(np.argmax(nash.attacker_strategy))
     st.markdown(f"""
-    <div class="card blue">
-        <b>🔍 Interprétation</b><br><br>
-        Le défenseur joue prioritairement
-        <span class="badge b-blue">{def_labels[top_def_i]}</span>
-        à <b>{nash.defender_strategy[top_def_i]:.1%}</b>.<br>
-        L'attaquant cible prioritairement
-        <span class="badge b-red">{att_labels[top_att_j].replace("Attack ", "")}</span>
-        à <b>{nash.attacker_strategy[top_att_j]:.1%}</b>.<br><br>
-        <b>Propriété d'indifférence :</b> À l'équilibre, toute action dans le support
-        (probabilité > 0) donne exactement le même espérance de payoff V = {nash.game_value:.3f}.
-    </div>
-    """, unsafe_allow_html=True)
+<div class="card blue">
+<b>🔍 Interprétation</b><br><br>
+Le défenseur joue prioritairement
+<span class="badge b-blue">{def_labels[top_def_i]}</span>
+à <b>{nash.defender_strategy[top_def_i]:.1%}</b>.<br>
+L'attaquant cible prioritairement
+<span class="badge b-red">{att_labels[top_att_j].replace("Attack ", "")}</span>
+à <b>{nash.attacker_strategy[top_att_j]:.1%}</b>.<br><br>
+<b>Propriété d'indifférence :</b> À l'équilibre, toute action dans le support
+(probabilité > 0) donne exactement le même espérance de payoff V = {nash.game_value:.3f}.
+</div>
+""", unsafe_allow_html=True)
 
     with st.expander("📋 Probabilités détaillées"):
         tc1, tc2 = st.columns(2)
@@ -1015,18 +1030,18 @@ with tab4:
                 unsafe_allow_html=True)
 
     st.markdown(f"""
-    <div class="card green">
-        <b>👑 Principe du jeu de Stackelberg</b><br>
-        Le défenseur (<b>leader</b>) annonce et s'engage dans sa stratégie mixte
-        <em>avant</em> que l'attaquant ne choisisse.
-        L'attaquant (<b>follower</b>) observe cet engagement et choisit la
-        <b>meilleure réponse pure</b> qui maximise son propre gain.
-        Le défenseur anticipe cette réaction et optimise son engagement en conséquence.<br><br>
-        🎯 Best response de l'attaquant :
-        <span class="badge b-red">⚔️ {best_node.name}</span>
-        (impact total : <b>{game.compute_attack_impact(best_node.name):.2f}</b>)
-    </div>
-    """, unsafe_allow_html=True)
+<div class="card green">
+<b>👑 Principe du jeu de Stackelberg</b><br>
+Le défenseur (<b>leader</b>) annonce et s'engage dans sa stratégie mixte
+<em>avant</em> que l'attaquant ne choisisse.
+L'attaquant (<b>follower</b>) observe cet engagement et choisit la
+<b>meilleure réponse pure</b> qui maximise son propre gain.
+Le défenseur anticipe cette réaction et optimise son engagement en conséquence.<br><br>
+🎯 Best response de l'attaquant :
+<span class="badge b-red">⚔️ {best_node.name}</span>
+(impact total : <b>{game.compute_attack_impact(best_node.name):.2f}</b>)
+</div>
+""", unsafe_allow_html=True)
 
     # Metrics
     gain4 = stack.defender_payoff - nash.game_value
@@ -1048,16 +1063,16 @@ with tab4:
     with col_se:
         top_stack_i = int(np.argmax(stack.defender_strategy))
         st.markdown(f"""
-        <div class="card green">
-            <b>🔍 Lecture du résultat</b><br><br>
-            L'engagement dominant du défenseur est<br>
-            <span class="badge b-green">{def_labels[top_stack_i]}</span>
-            à <b>{stack.defender_strategy[top_stack_i]:.1%}</b>.<br><br>
-            En voyant cet engagement, l'attaquant choisit de façon <b>déterministe</b>
-            le nœud <span class="badge b-red">⚔️ {best_node.name}</span>
-            car c'est sa meilleure réponse pure.
-        </div>
-        """, unsafe_allow_html=True)
+<div class="card green">
+<b>🔍 Lecture du résultat</b><br><br>
+L'engagement dominant du défenseur est<br>
+<span class="badge b-green">{def_labels[top_stack_i]}</span>
+à <b>{stack.defender_strategy[top_stack_i]:.1%}</b>.<br><br>
+En voyant cet engagement, l'attaquant choisit de façon <b>déterministe</b>
+le nœud <span class="badge b-red">⚔️ {best_node.name}</span>
+car c'est sa meilleure réponse pure.
+</div>
+""", unsafe_allow_html=True)
 
         df_stk = pd.DataFrame({
             "Action défense": def_labels,
@@ -1089,40 +1104,40 @@ with tab5:
     c_n, c_s, c_g = st.columns(3)
     with c_n:
         st.markdown(f"""
-        <div class="card purple" style="text-align:center">
-            <div style="font-size:1.8rem">🎯</div>
-            <b>Nash — Simultané</b><br>
-            <div style="font-size:2.2rem;font-weight:800;color:#a78bfa;
-                        font-family:'JetBrains Mono',monospace;margin:.3rem 0">
-                {nash.game_value:.3f}
-            </div>
-            <div style="color:#475569;font-size:.82rem">Valeur garantie du jeu</div>
-        </div>
-        """, unsafe_allow_html=True)
+<div class="card purple" style="text-align:center">
+<div style="font-size:1.8rem">🎯</div>
+<b>Nash — Simultané</b><br>
+<div style="font-size:2.2rem;font-weight:800;color:#a78bfa;
+font-family:'JetBrains Mono',monospace;margin:.3rem 0">
+{nash.game_value:.3f}
+</div>
+<div style="color:#475569;font-size:.82rem">Valeur garantie du jeu</div>
+</div>
+""", unsafe_allow_html=True)
     with c_s:
         st.markdown(f"""
-        <div class="card green" style="text-align:center">
-            <div style="font-size:1.8rem">👑</div>
-            <b>Stackelberg — Leader</b><br>
-            <div style="font-size:2.2rem;font-weight:800;color:#00ff88;
-                        font-family:'JetBrains Mono',monospace;margin:.3rem 0">
-                {stack.defender_payoff:.3f}
-            </div>
-            <div style="color:#475569;font-size:.82rem">Payoff en tant que leader</div>
-        </div>
-        """, unsafe_allow_html=True)
+<div class="card green" style="text-align:center">
+<div style="font-size:1.8rem">👑</div>
+<b>Stackelberg — Leader</b><br>
+<div style="font-size:2.2rem;font-weight:800;color:#00ff88;
+font-family:'JetBrains Mono',monospace;margin:.3rem 0">
+{stack.defender_payoff:.3f}
+</div>
+<div style="color:#475569;font-size:.82rem">Payoff en tant que leader</div>
+</div>
+""", unsafe_allow_html=True)
     with c_g:
         st.markdown(f"""
-        <div class="card amber" style="text-align:center">
-            <div style="font-size:1.8rem">🏆</div>
-            <b>Gain du Leadership</b><br>
-            <div style="font-size:2.2rem;font-weight:800;color:#fbbf24;
-                        font-family:'JetBrains Mono',monospace;margin:.3rem 0">
-                +{leadership_gain:.3f}
-            </div>
-            <div style="color:#475569;font-size:.82rem">+{gain_pct:.1f}% de performance</div>
-        </div>
-        """, unsafe_allow_html=True)
+<div class="card amber" style="text-align:center">
+<div style="font-size:1.8rem">🏆</div>
+<b>Gain du Leadership</b><br>
+<div style="font-size:2.2rem;font-weight:800;color:#fbbf24;
+font-family:'JetBrains Mono',monospace;margin:.3rem 0">
++{leadership_gain:.3f}
+</div>
+<div style="color:#475569;font-size:.82rem">+{gain_pct:.1f}% de performance</div>
+</div>
+""", unsafe_allow_html=True)
 
     # Comparison bar chart
     st.plotly_chart(_comparison_fig(nash.game_value, stack.defender_payoff),
@@ -1153,52 +1168,52 @@ with tab5:
     top_att_nash  = att_labels[int(np.argmax(nash.attacker_strategy))].replace("Attack ", "")
 
     st.markdown(f"""
-    <div class="card blue">
-        <b>📖 Ce que cet outil apporte vs une défense naïve</b><br><br>
+<div class="card blue">
+<b>📖 Ce que cet outil apporte vs une défense naïve</b><br><br>
 
-        <b>Défense naïve</b> : protéger toujours le même nœud
-        (ex. toujours <em>{att_labels[0].replace("Attack ","")}</em>) sans stratégie mixte.
-        L'attaquant peut alors s'adapter et exploiter les nœuds non protégés
-        pour un gain maximal.<br><br>
+<b>Défense naïve</b> : protéger toujours le même nœud
+(ex. toujours <em>{att_labels[0].replace("Attack ","")}</em>) sans stratégie mixte.
+L'attaquant peut alors s'adapter et exploiter les nœuds non protégés
+pour un gain maximal.<br><br>
 
-        <b>Nash (stratégies mixtes)</b> : le défenseur randomise ses actions selon
-        <span class="badge b-purple">{top_def_nash} ({nash.defender_strategy[int(np.argmax(nash.defender_strategy))]:.1%})</span>
-        L'attaquant répond en ciblant
-        <span class="badge b-red">⚔️ {top_att_nash} ({np.max(nash.attacker_strategy):.1%})</span>.
-        Valeur garantie : <b>{nash.game_value:.3f}</b>.<br><br>
+<b>Nash (stratégies mixtes)</b> : le défenseur randomise ses actions selon
+<span class="badge b-purple">{top_def_nash} ({nash.defender_strategy[int(np.argmax(nash.defender_strategy))]:.1%})</span>
+L'attaquant répond en ciblant
+<span class="badge b-red">⚔️ {top_att_nash} ({np.max(nash.attacker_strategy):.1%})</span>.
+Valeur garantie : <b>{nash.game_value:.3f}</b>.<br><br>
 
-        <b>Stackelberg (leader)</b> : en s'engageant publiquement dans
-        <span class="badge b-green">{top_def_stack} ({stack.defender_strategy[int(np.argmax(stack.defender_strategy))]:.1%})</span>,
-        le défenseur provoque une best response pure de l'attaquant vers
-        <span class="badge b-red">⚔️ {best_node.name}</span>.
-        Payoff réalisé : <b>{stack.defender_payoff:.3f}</b>
-        — soit <b>+{leadership_gain:.3f}</b> de mieux qu'en Nash.<br><br>
+<b>Stackelberg (leader)</b> : en s'engageant publiquement dans
+<span class="badge b-green">{top_def_stack} ({stack.defender_strategy[int(np.argmax(stack.defender_strategy))]:.1%})</span>,
+le défenseur provoque une best response pure de l'attaquant vers
+<span class="badge b-red">⚔️ {best_node.name}</span>.
+Payoff réalisé : <b>{stack.defender_payoff:.3f}</b>
+— soit <b>+{leadership_gain:.3f}</b> de mieux qu'en Nash.<br><br>
 
-        <b>🔑 Conclusion :</b> la théorie des jeux permet de dépasser
-        une défense intuitive ou fixe, et de quantifier précisément l'avantage
-        stratégique d'agir en premier (<em>first-mover advantage</em>).
-    </div>
-    """, unsafe_allow_html=True)
+<b>🔑 Conclusion :</b> la théorie des jeux permet de dépasser
+une défense intuitive ou fixe, et de quantifier précisément l'avantage
+stratégique d'agir en premier (<em>first-mover advantage</em>).
+</div>
+""", unsafe_allow_html=True)
 
     with st.expander("📚 Rappel des concepts théoriques"):
         col_t1, col_t2 = st.columns(2)
         with col_t1:
-            st.markdown("""
-            #### 🎯 Nash (von Neumann, 1928)
-            - Jeu simultané à somme nulle
-            - Chaque joueur **randomise** ses actions
-            - Aucun n'a intérêt à dévier unilatéralement
-            - Calculé par LP minimax / maximin
-            - Valeur unique garantie par le **Théorème Minimax**
-            - Formule LP : max V s.t. M^T·p ≥ V·1, Σp=1, p≥0
-            """)
+            st.markdown(f"""
+#### 🎯 Nash (von Neumann, 1928)
+- Jeu simultané à somme nulle
+- Chaque joueur **randomise** ses actions
+- Aucun n'a intérêt à dévier unilatéralement
+- Calculé par LP minimax / maximin
+- Valeur unique garantie par le **Théorème Minimax**
+- Formule LP : max V s.t. M^T·p ≥ V·1, Σp=1, p≥0
+""")
         with col_t2:
-            st.markdown("""
-            #### 👑 Stackelberg (von Stackelberg, 1934)
-            - Jeu séquentiel leader-follower
-            - Défenseur s'engage **publiquement** en premier
-            - Attaquant choisit la **best response pure**
-            - Défenseur anticipe et optimise sous cette contrainte
-            - Propriété fondamentale : **Payoff Stackelberg ≥ Nash**
-            - Calculé par LP pour chaque best response candidate j*
-            """)
+            st.markdown(f"""
+#### 👑 Stackelberg (von Stackelberg, 1934)
+- Jeu séquentiel leader-follower
+- Défenseur s'engage **publiquement** en premier
+- Attaquant choisit la **best response pure**
+- Défenseur anticipe et optimise sous cette contrainte
+- Propriété fondamentale : **Payoff Stackelberg ≥ Nash**
+- Calculé par LP pour chaque best response candidate j*
+""")
