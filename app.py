@@ -12,7 +12,6 @@ Onglets :
   5. Pareto           — frontière de Pareto & efficacité sociale
   6. Comparaison      — Nash vs Stackelberg vs Optimal centralisé
   7. Simulation       — convergence vers l'équilibre
-  8. État de l'art    — revue de la littérature
 """
 
 from __future__ import annotations
@@ -607,7 +606,6 @@ tabs = st.tabs([
     "Pareto",
     "Comparaison",
     "Simulation",
-    "État de l'art",
 ])
 
 tab_net, tab_mat, tab_nash, tab_stack, tab_pareto, tab_comp, tab_sim, tab_sota = tabs
