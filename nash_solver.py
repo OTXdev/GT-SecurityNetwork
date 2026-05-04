@@ -1,177 +1,181 @@
 """
 nash_solver.py
 ==============
-Solveur de l'Équilibre de Nash en stratégies mixtes (minimax / maximin).
-
-Formulation LP — Théorème Minimax de von Neumann (jeu à somme nulle)
----------------------------------------------------------------------
-La valeur du jeu V satisfait :
-
-    V = max_p  min_j  (p · M[:, j])   [défenseur — maximin]
-      = min_q  max_i  (M[i, :] · q)   [attaquant — minimax]
-
-LP Défenseur (maximin) — variables : (p_0,...,p_{n-1}, V_s)
-    Minimise  -V_s
-    s.t.  -Ms[:, j] · p + V_s ≤ 0   ∀j    (V_s ≤ colonnes)
-          Σ p_i = 1
-          p_i ≥ 0,  V_s ≥ 0
-
-LP Attaquant (minimax) — variables : (q_0,...,q_{m-1}, V_s)
-    Minimise  V_s
-    s.t.  Ms[i, :] · q - V_s ≤ 0    ∀i    (V_s ≥ lignes)
-          Σ q_j = 1
-          q_j ≥ 0,  V_s ≥ 0
-
-On décale Ms = M + shift (shift > 0) pour garantir V_s > 0.
-La valeur réelle est V = V_s - shift.
+Solveur Nash Equilibrium en stratégies mixtes (jeu non à somme nulle).
 """
 
 from __future__ import annotations
-
 from dataclasses import dataclass
-
 import numpy as np
 from scipy.optimize import linprog
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Résultat
-# ─────────────────────────────────────────────────────────────────────────────
-
 @dataclass
 class NashResult:
-    """Résultat du solveur de Nash.
-
-    Attributs
-    ---------
-    defender_strategy : stratégie mixte optimale du défenseur  (shape: n_rows,)
-    attacker_strategy : stratégie mixte optimale de l'attaquant (shape: n_cols,)
-    game_value        : valeur du jeu — utilité garantie au défenseur à l'équilibre
-    """
     defender_strategy: np.ndarray
     attacker_strategy: np.ndarray
-    game_value: float
+    defender_payoff: float
+    attacker_payoff: float
+    defender_labels: list
+    attacker_labels: list
+    converged: bool
+    message: str
+
+    def defender_dict(self) -> dict:
+        return {
+            label: round(float(prob), 4)
+            for label, prob in zip(self.defender_labels, self.defender_strategy)
+            if prob > 0.001
+        }
+
+    def attacker_dict(self) -> dict:
+        return {
+            label: round(float(prob), 4)
+            for label, prob in zip(self.attacker_labels, self.attacker_strategy)
+            if prob > 0.001
+        }
+
+    def summary(self) -> str:
+        lines = [
+            "=" * 55,
+            "  NASH EQUILIBRIUM",
+            "=" * 55,
+            f"  Payoff défenseur : {self.defender_payoff:+.4f}",
+            f"  Payoff attaquant : {self.attacker_payoff:+.4f}",
+            "",
+            "  Stratégie DÉFENSEUR :",
+        ]
+        for label, prob in self.defender_dict().items():
+            lines.append(f"    {label[:35]:<35s} {prob:.4f}")
+        lines += ["", "  Stratégie ATTAQUANT :"]
+        for label, prob in self.attacker_dict().items():
+            lines.append(f"    {label[:35]:<35s} {prob:.4f}")
+        lines += [f"\n  [{self.message}]", "=" * 55]
+        return "\n".join(lines)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Solveur principal
-# ─────────────────────────────────────────────────────────────────────────────
+class NashSolver:
+    def __init__(self, game) -> None:
+        self.game = game
+        self.M_def = game.get_payoff_matrix()
+        self.M_att = game.get_attacker_payoff_matrix()
+        self.defender_labels = [a.name for a in game.defense_actions]
+        self.attacker_labels = game.get_attack_labels()
+        self.n_actions = len(self.defender_labels)
+        self.n_attacks = len(self.attacker_labels)
 
-def compute_nash(payoff_matrix: np.ndarray) -> NashResult:
-    """Calcule l'équilibre de Nash en stratégies mixtes via Programmation Linéaire.
+        if self.M_def.shape != (self.n_actions, self.n_attacks):
+            raise ValueError(
+                f"Matrice de payoff dimension incorrecte: "
+                f"attendue ({self.n_actions}, {self.n_attacks}), "
+                f"obtenue {self.M_def.shape}"
+            )
 
-    Paramètres
-    ----------
-    payoff_matrix : np.ndarray  shape (n_rows, n_cols)
-        Matrice de payoff du DÉFENSEUR.
-        Lignes    = actions de défense disponibles
-        Colonnes  = nœuds pouvant être ciblés par l'attaquant
-        On suppose un jeu à somme nulle : payoff_att = -payoff_def.
+    def _solve_defender(self) -> tuple:
+        n = self.n_actions
+        m = self.n_attacks
 
-    Retourne
-    --------
-    NashResult
-        defender_strategy  : probabilités sur les lignes (actions de défense)
-        attacker_strategy  : probabilités sur les colonnes (nœuds ciblés)
-        game_value         : valeur du jeu (utilité garantie au défenseur)
+        c = np.zeros(n + 1)
+        c[-1] = -1.0
 
-    Exceptions
-    ----------
-    ValueError   si la matrice est mal formée (non-2D ou vide)
-    RuntimeError si le solveur LP échoue
-    """
-    M = np.asarray(payoff_matrix, dtype=float)
-    if M.ndim != 2 or M.size == 0:
-        raise ValueError("payoff_matrix doit être un tableau 2D non vide.")
+        A_ub = np.zeros((m, n + 1))
+        for j in range(m):
+            A_ub[j, :n] = -self.M_def[:, j]
+            A_ub[j, n]  =  1.0
+        b_ub = np.zeros(m)
 
-    n_rows, n_cols = M.shape
+        A_eq = np.zeros((1, n + 1))
+        A_eq[0, :n] = 1.0
+        b_eq = np.array([1.0])
 
-    # ── Décalage pour rendre tous les payoffs strictement positifs ────────────
-    # Garantit que V_s > 0 dans les deux LP.
-    shift = float(-M.min() + 1.0)
-    Ms = M + shift  # Ms[i, j] > 0  ∀i, j
+        bounds = [(0.0, 1.0)] * n + [(None, None)]
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # LP du défenseur (maximin)
-    # Variables : x = [p_0, ..., p_{n_rows-1}, V_s]  longueur n_rows + 1
-    # ══════════════════════════════════════════════════════════════════════════
+        result = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq,
+                         bounds=bounds, method="highs")
 
-    # Objectif : minimiser -V_s
-    c_def = np.zeros(n_rows + 1)
-    c_def[-1] = -1.0
+        if result.success:
+            strategy = np.clip(result.x[:n], 0.0, 1.0)
+            total = strategy.sum()
+            if total > 1e-10:
+                strategy /= total
+            value = float(-result.fun)
+            return strategy, value, True
+        else:
+            strategy = np.ones(n) / n
+            value = float(strategy @ self.M_def).mean()
+            return strategy, value, False
 
-    # Contraintes inégalité : -Ms[:, j] · p + V_s ≤ 0   ∀j
-    A_ub_def = np.zeros((n_cols, n_rows + 1))
-    A_ub_def[:, :n_rows] = -Ms.T   # ligne j = -Ms[:, j]ᵀ
-    A_ub_def[:, n_rows]  =  1.0    # +V_s
-    b_ub_def = np.zeros(n_cols)
+    def _solve_attacker(self) -> tuple:
+        n = self.n_actions
+        m = self.n_attacks
 
-    # Contrainte égalité : Σ p_i = 1
-    A_eq_def = np.zeros((1, n_rows + 1))
-    A_eq_def[0, :n_rows] = 1.0
-    b_eq_def = np.array([1.0])
+        c = np.zeros(m + 1)
+        c[-1] = 1.0
 
-    bounds_def = [(0.0, None)] * n_rows + [(0.0, None)]
+        A_ub = np.zeros((n, m + 1))
+        for i in range(n):
+            A_ub[i, :m] =  self.M_att[i, :]
+            A_ub[i, m]  = -1.0
+        b_ub = np.zeros(n)
 
-    lp_def = linprog(
-        c=c_def,
-        A_ub=A_ub_def, b_ub=b_ub_def,
-        A_eq=A_eq_def, b_eq=b_eq_def,
-        bounds=bounds_def,
-        method="highs",
-    )
-    if not lp_def.success:
-        raise RuntimeError(
-            f"Nash LP (défenseur) a échoué : {lp_def.message}"
+        A_eq = np.zeros((1, m + 1))
+        A_eq[0, :m] = 1.0
+        b_eq = np.array([1.0])
+
+        bounds = [(0.0, 1.0)] * m + [(None, None)]
+
+        result = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq,
+                         bounds=bounds, method="highs")
+
+        if result.success:
+            strategy = np.clip(result.x[:m], 0.0, 1.0)
+            total = strategy.sum()
+            if total > 1e-10:
+                strategy /= total
+            value = float(result.fun)
+            return strategy, value, True
+        else:
+            strategy = np.ones(m) / m
+            value = float(self.M_att).mean()
+            return strategy, value, False
+
+    def solve(self) -> NashResult:
+        def_strategy, def_payoff, def_ok = self._solve_defender()
+        att_strategy, att_payoff, att_ok = self._solve_attacker()
+        converged = def_ok and att_ok
+
+        if converged:
+            message = "Nash Equilibrium trouvé (LP HiGHS)"
+        elif def_ok:
+            message = "LP attaquant non convergé — stratégie uniforme utilisée"
+        elif att_ok:
+            message = "LP défenseur non convergé — stratégie uniforme utilisée"
+        else:
+            message = "Les deux LP n'ont pas convergé — stratégies uniformes"
+
+        return NashResult(
+            defender_strategy=def_strategy,
+            attacker_strategy=att_strategy,
+            defender_payoff=def_payoff,
+            attacker_payoff=att_payoff,
+            defender_labels=self.defender_labels,
+            attacker_labels=self.attacker_labels,
+            converged=converged,
+            message=message,
         )
 
-    # Extraire et normaliser la stratégie
-    p = np.clip(lp_def.x[:n_rows], 0.0, None)
-    total_p = p.sum()
-    p /= total_p if total_p > 1e-12 else 1.0
-    V = float(lp_def.x[n_rows]) - shift   # décalage inverse
+    def price_of_anarchy(self, optimal_payoff: float) -> float:
+        result = self.solve()
+        nash_payoff = result.defender_payoff
+        if abs(nash_payoff) < 1e-10:
+            return 1.0
+        poa = abs(nash_payoff) / abs(optimal_payoff) if abs(optimal_payoff) > 1e-10 else 1.0
+        return round(poa, 4)
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # LP de l'attaquant (minimax)
-    # Variables : y = [q_0, ..., q_{n_cols-1}, V_s]  longueur n_cols + 1
-    # ══════════════════════════════════════════════════════════════════════════
-
-    # Objectif : minimiser V_s
-    c_att = np.zeros(n_cols + 1)
-    c_att[-1] = 1.0
-
-    # Contraintes inégalité : Ms[i, :] · q - V_s ≤ 0   ∀i
-    A_ub_att = np.zeros((n_rows, n_cols + 1))
-    A_ub_att[:, :n_cols] =  Ms       # ligne i = Ms[i, :]
-    A_ub_att[:, n_cols]  = -1.0      # -V_s
-    b_ub_att = np.zeros(n_rows)
-
-    # Contrainte égalité : Σ q_j = 1
-    A_eq_att = np.zeros((1, n_cols + 1))
-    A_eq_att[0, :n_cols] = 1.0
-    b_eq_att = np.array([1.0])
-
-    bounds_att = [(0.0, None)] * n_cols + [(0.0, None)]
-
-    lp_att = linprog(
-        c=c_att,
-        A_ub=A_ub_att, b_ub=b_ub_att,
-        A_eq=A_eq_att, b_eq=b_eq_att,
-        bounds=bounds_att,
-        method="highs",
-    )
-    if not lp_att.success:
-        raise RuntimeError(
-            f"Nash LP (attaquant) a échoué : {lp_att.message}"
-        )
-
-    # Extraire et normaliser la stratégie
-    q = np.clip(lp_att.x[:n_cols], 0.0, None)
-    total_q = q.sum()
-    q /= total_q if total_q > 1e-12 else 1.0
-
-    return NashResult(
-        defender_strategy=p,
-        attacker_strategy=q,
-        game_value=V,
-    )
+    def optimal_centralized(self) -> tuple:
+        worst_case = self.M_def.min(axis=1)
+        best_action_idx = int(np.argmax(worst_case))
+        best_payoff = float(worst_case[best_action_idx])
+        one_hot = np.zeros(self.n_actions)
+        one_hot[best_action_idx] = 1.0
+        return best_payoff, one_hot

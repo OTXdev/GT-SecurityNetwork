@@ -1,310 +1,382 @@
 """
 app.py
 ======
-Interface Streamlit premium — GT-SecurityNetwork
-Théorie des Jeux · Sécurité Réseau
+GT-SecurityNetwork — Théorie des Jeux & Sécurité Réseau
+Interface Streamlit professionnelle.
 
-Intègre :
-  game_model        → Game, Node, Edge
-  nash_solver       → compute_nash
-  stackelberg_solver→ compute_stackelberg
+Onglets :
+  1. Réseau           — topologie, métriques, simulateur d'attaque
+  2. Matrice          — heatmap des payoffs
+  3. Nash             — équilibre Nash stratégies mixtes
+  4. Stackelberg      — jeu séquentiel leader/follower
+  5. Pareto           — frontière de Pareto & efficacité sociale
+  6. Comparaison      — Nash vs Stackelberg vs Optimal centralisé
+  7. Simulation       — convergence vers l'équilibre
+  8. État de l'art    — revue de la littérature
 """
 
 from __future__ import annotations
 
-import json
-
-import networkx as nx
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.express as px
+import networkx as nx
 import streamlit as st
-import textwrap
 
 from game_model import Game, Node, Edge
-from nash_solver import compute_nash, NashResult
+from nash_solver import NashSolver, NashResult
 from stackelberg_solver import compute_stackelberg, StackelbergResult
+from pareto import compute_pareto, pareto_efficiency_score
+from simulator import GameSimulator
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.set_page_config(
-    page_title="GT-SecurityNetwork · Game Theory",
-    page_icon="🛡️",
+    page_title="GT-SecurityNetwork",
+    page_icon="🛡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CSS — DARK CYBERSECURITY THEME
+# CSS — PROFESSIONAL LIGHT/DARK THEME
 # ══════════════════════════════════════════════════════════════════════════════
-
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 
-/* ── Global reset ── */
+/* ============================================
+   DARK THEME - GT-SecurityNetwork
+   ============================================ */
+
+:root {
+    --bg-deep: #0a0c12;
+    --bg-surface: #11131a;
+    --bg-surface-hover: #1a1d26;
+    --border-subtle: #232630;
+    --border-medium: #2d313e;
+    --text-primary: #e8edf2;
+    --text-secondary: #94a3b8;
+    --text-muted: #5b6b8c;
+    
+    --accent-blue: #3b82f6;
+    --accent-blue-glow: #2563eb;
+    --accent-red: #ef4444;
+    --accent-green: #10b981;
+    --accent-amber: #f59e0b;
+    --accent-purple: #8b5cf6;
+}
+
+/* Base */
 html, body, .stApp {
-    background: linear-gradient(145deg, #060b14 0%, #091525 60%, #060d1f 100%) !important;
-    color: #e2e8f0 !important;
-    font-family: 'Inter', sans-serif !important;
-}
-[data-testid="stAppViewContainer"] { background: transparent !important; }
-[data-testid="stHeader"]           { background: transparent !important; }
-section[data-testid="stSidebar"] > div { background: rgba(6,11,20,0.97) !important; }
-#MainMenu, footer, header          { display: none !important; }
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: rgba(255,255,255,0.03); }
-::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.3); border-radius: 3px; }
-
-/* ── Sidebar border ── */
-section[data-testid="stSidebar"] {
-    border-right: 1px solid rgba(0,212,255,0.12) !important;
+    font-family: 'DM Sans', sans-serif !important;
+    background: var(--bg-deep) !important;
 }
 
-/* ── Hero header ── */
-.hero-wrap {
+[data-testid="stAppViewContainer"] { 
+    background: var(--bg-deep) !important;
+}
+
+[data-testid="stHeader"] { 
+    background: var(--bg-deep) !important;
+    border-bottom: 1px solid var(--border-subtle) !important;
+}
+
+section[data-testid="stSidebar"] > div {
+    background: var(--bg-surface) !important;
+    border-right: 1px solid var(--border-subtle) !important;
+}
+
+#MainMenu, footer { display: none !important; }
+
+/* Couleurs texte globales */
+* {
+    color: var(--text-primary) !important;
+}
+
+/* Exceptions pour les badges */
+.kpi-value.blue { color: #60a5fa !important; }
+.kpi-value.green { color: #34d399 !important; }
+.kpi-value.amber { color: #fbbf24 !important; }
+.kpi-value.red { color: #f87171 !important; }
+.badge { color: inherit !important; }
+.b-blue { color: #60a5fa !important; background: #1e3a5f !important; }
+.b-green { color: #34d399 !important; background: #14532d !important; }
+.b-amber { color: #fbbf24 !important; background: #78350f !important; }
+.b-red { color: #f87171 !important; background: #7f1d1d !important; }
+.b-purple { color: #c084fc !important; background: #3b0764 !important; }
+
+/* Sidebar brand */
+.sidebar-brand {
+    padding: 1.5rem 0 1.2rem;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 1.2rem;
     text-align: center;
-    padding: 2rem 0 0.5rem;
 }
-.hero-title {
-    font-size: clamp(2rem, 4vw, 3rem);
-    font-weight: 800;
-    background: linear-gradient(135deg, #00d4ff 0%, #00ff88 45%, #7c3aed 100%);
-    background-size: 200% 200%;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: -0.025em;
-    line-height: 1.15;
-    animation: hero-shift 6s ease-in-out infinite;
+.sidebar-brand h1 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin: 0.4rem 0 0.1rem;
 }
-@keyframes hero-shift {
-    0%,100% { background-position: 0% 50%; }
-    50%      { background-position: 100% 50%; }
-}
-.hero-sub {
-    font-size: 1rem;
-    color: #475569;
-    margin-top: 0.4rem;
-    letter-spacing: 0.06em;
-    font-weight: 400;
-}
-.hero-scenario {
-    display: inline-block;
-    background: rgba(0,212,255,0.1);
-    border: 1px solid rgba(0,212,255,0.25);
-    border-radius: 30px;
-    padding: 0.25rem 1rem;
-    color: #00d4ff;
-    font-size: 0.85rem;
-    font-weight: 600;
-    margin-top: 0.6rem;
-    letter-spacing: 0.04em;
+.sidebar-brand p {
+    font-size: 0.72rem;
+    margin: 0;
+    text-transform: uppercase;
+    opacity: 0.6;
 }
 
-/* ── Metric grid ── */
-.metric-grid {
+/* Page header */
+.page-header {
+    padding: 2rem 0 1.5rem;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 2rem;
+}
+.page-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin: 0;
+}
+.page-sub {
+    font-size: 0.88rem;
+    margin: 0.3rem 0 0;
+    opacity: 0.6;
+}
+
+/* KPI Row */
+.kpi-row {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
-    margin: 1.5rem 0 0.5rem;
+    margin-bottom: 1.5rem;
 }
-.m-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 18px;
-    padding: 1.25rem 1rem;
-    text-align: center;
+.kpi-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 1.25rem 1.2rem;
     position: relative;
     overflow: hidden;
-    transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
 }
-.m-card:hover {
-    transform: translateY(-3px);
-    border-color: rgba(0,212,255,0.35);
-    box-shadow: 0 10px 36px rgba(0,212,255,0.12);
-}
-.m-card::after {
+.kpi-card::before {
     content: '';
-    position: absolute; top: 0; left: 0; right: 0; height: 2px;
-    background: var(--accent, linear-gradient(90deg,#00d4ff,#00ff88));
-    opacity: 0; transition: opacity .25s;
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--accent, #3b82f6);
+    border-radius: 12px 12px 0 0;
 }
-.m-card:hover::after { opacity: 1; }
-.m-icon  { font-size: 1.6rem; margin-bottom: .35rem; }
-.m-label { font-size: .7rem; color: #475569; text-transform: uppercase; letter-spacing: .1em; font-weight: 600; }
-.m-value {
-    font-size: 2.1rem; font-weight: 800;
-    font-family: 'JetBrains Mono', monospace;
-    color: #00d4ff;
-    text-shadow: 0 0 22px rgba(0,212,255,.45);
-    line-height: 1.1;
+.kpi-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    opacity: 0.6;
+}
+.kpi-value {
+    font-size: 1.9rem;
+    font-weight: 700;
+    font-family: 'DM Mono', monospace;
+    line-height: 1;
 }
 
-/* ── Section title ── */
+/* Section title */
 .sec-title {
-    font-size: 1.25rem; font-weight: 700; color: #f1f5f9;
-    margin: 1.8rem 0 .8rem;
-    display: flex; align-items: center; gap: .5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 1.8rem 0 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
 }
 .sec-title::after {
     content: '';
-    flex: 1; height: 1px;
-    background: linear-gradient(90deg, rgba(0,212,255,.35), transparent);
+    flex: 1;
+    height: 1px;
+    background: var(--border-subtle);
 }
 
-/* ── Cards ── */
+/* Cards */
 .card {
-    background: rgba(255,255,255,0.028);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 16px;
-    padding: 1.15rem 1.25rem;
-    margin: .75rem 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 1.2rem 1.4rem;
+    margin: 0.75rem 0;
 }
-.card.blue   { border-color: rgba(0,212,255,.25); }
-.card.green  { border-color: rgba(0,255,136,.25); }
-.card.purple { border-color: rgba(124,58,237,.25); }
-.card.amber  { border-color: rgba(245,158,11,.25); }
-.card.red    { border-color: rgba(239,68,68,.25);  }
+.card.blue { border-left: 3px solid var(--accent-blue); }
+.card.green { border-left: 3px solid var(--accent-green); }
+.card.amber { border-left: 3px solid var(--accent-amber); }
+.card.red { border-left: 3px solid var(--accent-red); }
+.card.purple { border-left: 3px solid var(--accent-purple); }
 
-/* ── Badges ── */
+/* Badges */
 .badge {
-    display: inline-block; border-radius: 20px;
-    padding: .2rem .7rem; font-size: .73rem; font-weight: 600;
-    letter-spacing: .04em; margin: .2rem .1rem;
+    display: inline-block;
+    border-radius: 6px;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    margin: 0.15rem;
 }
-.b-blue   { background: rgba(0,212,255,.15); color:#00d4ff; border:1px solid rgba(0,212,255,.3); }
-.b-green  { background: rgba(0,255,136,.15); color:#00ff88; border:1px solid rgba(0,255,136,.3); }
-.b-purple { background: rgba(124,58,237,.15); color:#a78bfa; border:1px solid rgba(124,58,237,.3); }
-.b-amber  { background: rgba(245,158,11,.15); color:#fbbf24; border:1px solid rgba(245,158,11,.3); }
-.b-red    { background: rgba(239,68,68,.15); color:#f87171; border:1px solid rgba(239,68,68,.3); }
 
-/* ── Tabs ── */
+/* Tabs */
 .stTabs [data-baseweb="tab-list"] {
-    background: rgba(255,255,255,0.03) !important;
-    border: 1px solid rgba(255,255,255,0.06) !important;
-    border-radius: 14px !important; padding: 5px !important; gap: 4px !important;
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 10px !important;
+    padding: 4px !important;
 }
 .stTabs [data-baseweb="tab"] {
     background: transparent !important;
-    color: #475569 !important;
-    border-radius: 10px !important;
-    font-weight: 600 !important; font-size: .88rem !important;
-    padding: .5rem 1rem !important;
-    transition: all .2s !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    padding: 0.45rem 0.9rem !important;
 }
 .stTabs [aria-selected="true"] {
-    background: rgba(0,212,255,0.13) !important;
-    color: #00d4ff !important;
-    box-shadow: 0 0 14px rgba(0,212,255,0.18) !important;
+    background: #1e293b !important;
+    font-weight: 600 !important;
 }
-.stTabs [data-baseweb="tab-border"]   { display: none !important; }
-.stTabs [data-baseweb="tab-highlight"]{ display: none !important; }
+.stTabs [data-baseweb="tab-border"] { display: none !important; }
 
-/* ── Buttons ── */
+/* Buttons */
 .stButton > button {
-    background: linear-gradient(135deg, #00d4ff 0%, #0099bb 100%) !important;
-    color: #060b14 !important; font-weight: 700 !important;
-    border: none !important; border-radius: 10px !important;
-    padding: .55rem 1.8rem !important;
-    letter-spacing: .02em !important;
-    transition: all .3s !important;
+    background: var(--accent-blue) !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 0.5rem 1.5rem !important;
 }
 .stButton > button:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 8px 28px rgba(0,212,255,.38) !important;
+    background: var(--accent-blue-glow) !important;
+    transform: translateY(-1px) !important;
 }
 
-/* ── Inputs ── */
+/* Inputs */
 .stTextInput input, .stNumberInput input {
-    background: rgba(255,255,255,0.05) !important;
-    border: 1px solid rgba(255,255,255,.1) !important;
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border-subtle) !important;
     border-radius: 8px !important;
-    color: #e2e8f0 !important;
 }
 .stSelectbox > div > div {
-    background: rgba(255,255,255,0.05) !important;
-    border-color: rgba(255,255,255,.1) !important;
-    color: #e2e8f0 !important;
+    background: var(--bg-surface) !important;
+    border-color: var(--border-subtle) !important;
 }
-/* ── Slider ── */
-.stSlider .stSlider > div { color: #00d4ff; }
 
-/* ── Sidebar logo ── */
-.sb-logo {
-    text-align: center; padding: 1.2rem 0 1rem;
-    border-bottom: 1px solid rgba(0,212,255,.12);
-    margin-bottom: 1.2rem;
+/* Dataframe - DARK MODE */
+.stDataFrame {
+    border-radius: 10px !important;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-surface) !important;
 }
-.sb-logo h2 {
-    font-size: 1.2rem; font-weight: 800; margin: .3rem 0 0;
-    background: linear-gradient(135deg,#00d4ff,#00ff88);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+.stDataFrame th {
+    background: var(--bg-surface-hover) !important;
+    font-weight: 600 !important;
 }
-.sb-logo p { color: #475569; font-size: .75rem; margin: .1rem 0 0; }
+.stDataFrame td {
+    background: var(--bg-surface) !important;
+}
+.stDataFrame tbody tr:nth-of-type(even) {
+    background: var(--bg-surface-hover) !important;
+}
 
-/* ── Dataframe ── */
-.stDataFrame { border-radius: 12px !important; overflow: hidden; }
+/* Expander */
+.stExpander {
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 10px !important;
+    background: var(--bg-surface) !important;
+}
 
-/* ── Expander ── */
-.stExpander { border: 1px solid rgba(255,255,255,0.07) !important; border-radius: 12px !important; }
-.stExpander summary { color: #94a3b8 !important; }
+/* SOTA sections */
+.sota-section {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 1.5rem 2rem;
+    margin: 1rem 0;
+}
+.sota-section h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 0.8rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--accent-blue);
+    display: inline-block;
+}
+.sota-section p, .sota-section li {
+    font-size: 0.88rem;
+    line-height: 1.7;
+    color: var(--text-secondary) !important;
+}
 
-/* ── Info / warning / success ── */
-.stAlert { border-radius: 10px !important; }
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-deep); }
+::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 3px; }
 
-/* ── Divider ── */
-hr { border-color: rgba(0,212,255,.15) !important; }
+hr { border-color: var(--border-subtle) !important; }
+
+/* Sliders */
+.stSlider label { color: var(--text-primary) !important; }
+.stSlider [role="slider"] { background: var(--accent-blue) !important; }
+
+/* Metrics */
+[data-testid="stMetricLabel"] { color: var(--text-secondary) !important; }
+[data-testid="stMetricValue"] { color: var(--text-primary) !important; }
+[data-testid="stMetricDelta"] { color: var(--accent-green) !important; }
+
+/* Radio, Checkbox, Selectbox */
+.stRadio label, .stCheckbox label, .stSelectbox label {
+    color: var(--text-primary) !important;
+}
+
+/* Footer */
+footer p { color: var(--text-muted) !important; }
 </style>
 """, unsafe_allow_html=True)
-
-
 # ══════════════════════════════════════════════════════════════════════════════
-# PLOTLY THEME CONSTANTS
+# PLOTLY THEME
 # ══════════════════════════════════════════════════════════════════════════════
 
-_PL = dict(                                 # base plotly layout
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(255,255,255,0.025)",
-    font=dict(family="Inter, sans-serif", color="#94a3b8", size=12),
-    hoverlabel=dict(
-        bgcolor="rgba(6,11,20,0.97)",
-        bordercolor="rgba(0,212,255,0.4)",
-        font_color="#e2e8f0",
-    ),
+_PL = dict(
+    paper_bgcolor="#11131a",
+    plot_bgcolor="#0d0f14",
+    font=dict(family="DM Sans, sans-serif", color="#e2e8f0", size=12),
+    hoverlabel=dict(bgcolor="#1e293b", bordercolor="#334155", font_color="#f1f5f9"),
 )
-_GRID = dict(
-    gridcolor="rgba(255,255,255,0.06)",
-    zerolinecolor="rgba(255,255,255,0.1)",
-    linecolor="rgba(255,255,255,0.06)",
-)
-
-C_DEF   = "#00d4ff"   # défenseur — bleu électrique
-C_ATT   = "#ef4444"   # attaquant — rouge
-C_STACK = "#00ff88"   # Stackelberg — vert néon
-C_NASH  = "#a78bfa"   # Nash — violet
-C_BOTH  = "#f59e0b"   # protégé + attaqué — ambre
-C_MUTED = "#475569"
-
+_GRID = dict(gridcolor="#1e293b", zerolinecolor="#334155", linecolor="#334155")
+C_DEF   = "#3b82f6"
+C_ATT   = "#ef4444"
+C_STACK = "#10b981"
+C_NASH  = "#8b5cf6"
+C_PARETO = "#f59e0b"
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SESSION STATE INIT
+# SESSION STATE
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _init():
     defaults = {
-        "scenario_key":   "critical-db",
-        "defense_rate":   0.80,
-        "lateral_factor": 0.20,
-        "custom_nodes": [
-            {"name": "WebApp",   "value": 8.0,  "dcost": 2.0,  "vuln": 0.85, "acost": 1.0, "crit": 1.0},
-            {"name": "Database", "value": 14.0, "dcost": 3.0,  "vuln": 0.90, "acost": 2.0, "crit": 1.3},
-            {"name": "Mail",     "value": 5.0,  "dcost": 1.5,  "vuln": 0.70, "acost": 0.8, "crit": 0.9},
-        ],
+        "network_nodes": {
+            'Serveur Principal': {'value': 100, 'critical': True,  'type': 'server'},
+            'Base de Données':   {'value': 90,  'critical': True,  'type': 'database'},
+            'DNS':               {'value': 80,  'critical': True,  'type': 'dns'},
+            'Firewall':          {'value': 95,  'critical': True,  'type': 'firewall'},
+            'Routeur':           {'value': 70,  'critical': False, 'type': 'router'},
+            'Switch':            {'value': 60,  'critical': False, 'type': 'switch'},
+            'Poste Admin':       {'value': 85,  'critical': True,  'type': 'workstation'},
+            'Serveur Backup':    {'value': 75,  'critical': False, 'type': 'server'},
+        },
+        "defender_budget": 2,
+        "attacker_budget": 1,
+        "nash_result": None,
+        "stack_result": None,
+        "game_model": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -312,313 +384,71 @@ def _init():
 
 _init()
 
-
 # ══════════════════════════════════════════════════════════════════════════════
-# PLOTLY CHART BUILDERS
+# GAME BUILDER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _network_fig(game: Game, protected: list[str] | None = None,
-                 attacked: str | None = None) -> go.Figure:
-    G = nx.Graph()
-    for n in game.nodes:
-        G.add_node(n.name)
-    for e in game.edges:
-        G.add_edge(e.source, e.target, weight=e.weight)
-    if G.number_of_edges() == 0:
-        for i in range(len(game.nodes) - 1):
-            G.add_edge(game.nodes[i].name, game.nodes[i + 1].name, weight=0.4)
-
-    pos = nx.spring_layout(G, seed=42, k=2.5, iterations=120)
-    p_set = set(protected or [])
-    traces: list[go.BaseTraceType] = []
-
-    # Edge traces
-    for u, v, data in G.edges(data=True):
-        x0, y0 = pos[u]; x1, y1 = pos[v]
-        w = data.get("weight", 0.4)
-        traces.append(go.Scatter(
-            x=[x0, x1, None], y=[y0, y1, None], mode="lines",
-            line=dict(width=w * 4, color=f"rgba(100,116,139,{0.15 + w * 0.4})"),
-            hoverinfo="none", showlegend=False,
+def build_game() -> Game:
+    nodes = []
+    for node_name, info in st.session_state.network_nodes.items():
+        base_value   = float(info['value'])
+        is_critical  = info.get('critical', False)
+        defense_cost = base_value * 0.15
+        attack_cost  = base_value * 0.20
+        vulnerability = 0.95 if is_critical else 0.70
+        criticality   = 1.5  if is_critical else 1.0
+        nodes.append(Node(
+            name=node_name,
+            attack_value=base_value,
+            defense_cost=defense_cost,
+            vulnerability=vulnerability,
+            attack_cost=attack_cost,
+            criticality=criticality,
         ))
 
-    # Node trace
-    nxl, nyl, nc, ns, nt, nh = [], [], [], [], [], []
-    for nm in G.nodes:
-        x, y = pos[nm]
-        nxl.append(x); nyl.append(y)
-        node = game.get_node(nm)
-        ip, ia = nm in p_set, nm == attacked
-        color = (C_BOTH if ip and ia else
-                 C_ATT  if ia else
-                 C_STACK if ip else C_DEF)
-        nc.append(color)
-        ns.append(22 + node.attack_value * 3.8)
-        nt.append(nm)
-        nh.append(
-            f"<b>{nm}</b><br>"
-            f"💰 Valeur : <b>{node.attack_value:.1f}</b><br>"
-            f"🛡️ Coût déf. : {node.defense_cost:.1f}<br>"
-            f"⚠️ Vulnérabilité : {node.vulnerability:.0%}<br>"
-            f"📌 Criticité : {node.criticality:.2f}<br>"
-            f"💥 Impact total : {game.compute_attack_impact(nm):.2f}"
-        )
-
-    traces.append(go.Scatter(
-        x=nxl, y=nyl, mode="markers+text",
-        marker=dict(
-            color=nc, size=ns,
-            line=dict(width=2, color="rgba(255,255,255,0.18)"),
-            opacity=0.92,
-        ),
-        text=nt, textposition="top center",
-        textfont=dict(size=12, color="#e2e8f0", family="Inter"),
-        hovertext=nh, hoverinfo="text", showlegend=False,
-    ))
-
-    # Legend annotations
-    legend_items = [
-        ("🔵", C_DEF,   "Neutre"),
-        ("🟢", C_STACK, "Protégé"),
-        ("🔴", C_ATT,   "Attaqué"),
-        ("🟡", C_BOTH,  "Protégé + Attaqué"),
+    node_names = [n.name for n in nodes]
+    edges = []
+    conn_map = [
+        ('Serveur Principal', 'Base de Données', 0.9),
+        ('Serveur Principal', 'DNS',             0.8),
+        ('Serveur Principal', 'Firewall',        0.7),
+        ('Firewall',          'Routeur',          1.0),
+        ('Firewall',          'Poste Admin',      0.9),
+        ('Routeur',           'Switch',           0.8),
+        ('Base de Données',   'Serveur Backup',   0.6),
+        ('DNS',               'Routeur',          0.5),
     ]
-    annotations = []
-    for i, (icon, color, label) in enumerate(legend_items):
-        annotations.append(dict(
-            x=0.98, y=1 - i * 0.065, xref="paper", yref="paper",
-            text=f'<span style="color:{color}">●</span>  {label}',
-            showarrow=False, font=dict(size=11, color="#94a3b8"),
-            xanchor="right",
-        ))
+    for src, tgt, w in conn_map:
+        if src in node_names and tgt in node_names:
+            edges.append(Edge(src, tgt, w))
 
-    x_vals = [pos[nm][0] for nm in G.nodes]
-    y_vals = [pos[nm][1] for nm in G.nodes]
-    x_min, x_max = min(x_vals), max(x_vals)
-    y_min, y_max = min(y_vals), max(y_vals)
-    x_span = x_max - x_min if x_max != x_min else 1.0
-    y_span = y_max - y_min if y_max != y_min else 1.0
+    if not edges:
+        for i in range(len(node_names) - 1):
+            edges.append(Edge(node_names[i], node_names[i + 1], 0.5))
 
-    _layout = dict(_PL)
-    fig = go.Figure(data=traces)
-    fig.update_layout(
-        **_PL,
-        margin=dict(l=40, r=40, t=65, b=40),
-        annotations=annotations,
-        xaxis=dict(
-            showgrid=False, zeroline=False, showticklabels=False,
-            range=[x_min - 0.25 * x_span, x_max + 0.25 * x_span]
-        ),
-        yaxis=dict(
-            showgrid=False, zeroline=False, showticklabels=False,
-            range=[y_min - 0.2 * y_span, y_max + 0.2 * y_span]
-        ),
-        height=450,
-        title=dict(text="🕸️ Topologie du réseau", font=dict(size=15, color="#e2e8f0"),
-                   x=0.5, xanchor="center"),
-        hovermode="closest",
+    return Game(
+        nodes=nodes,
+        edges=edges,
+        defense_success_rate=0.85,
+        lateral_movement_factor=0.15,
+        allow_pair_defense=True,
+        defender_budget=st.session_state.defender_budget,
+        attacker_budget=st.session_state.attacker_budget,
     )
-    return fig
-
-
-def _heatmap_fig(matrix: np.ndarray, row_labels: list[str],
-                 col_labels: list[str], title: str) -> go.Figure:
-
-    def _shorten(lbl: str) -> str:
-        return lbl.replace("No defense", "⚫ Aucune").replace("Protect ", "🛡️ ").replace("Attack ", "⚔️ ")
-
-    r_short = [_shorten(l) for l in row_labels]
-    c_short = [_shorten(l) for l in col_labels]
-    text2d = [[f"{matrix[i, j]:.2f}" for j in range(matrix.shape[1])]
-              for i in range(matrix.shape[0])]
-
-    fig = go.Figure(go.Heatmap(
-        z=matrix, x=c_short, y=r_short,
-        text=text2d, texttemplate="<b>%{text}</b>",
-        colorscale=[
-            [0.0, "#7f1d1d"], [0.25, "#dc2626"],
-            [0.45, "#f59e0b"], [0.65, "#22c55e"],
-            [1.0, "#00ff88"],
-        ],
-        hovertemplate=(
-            "Défense : %{y}<br>Attaque : %{x}<br>"
-            "Payoff : <b>%{z:.3f}</b><extra></extra>"
-        ),
-        showscale=True,
-        colorbar=dict(
-            title=dict(text="Utilité défenseur", font=dict(color="#94a3b8", size=11)),
-            tickfont=dict(color="#94a3b8"),
-            bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)",
-            len=0.85,
-        ),
-    ))
-    _layout = dict(_PL)
-    fig.update_layout(
-        **_PL,
-        margin=dict(l=50, r=30, t=55, b=50),
-        title=dict(text=title, font=dict(size=15, color="#e2e8f0")),
-        height=max(380, matrix.shape[0] * 40 + 120),
-        xaxis=dict(**_GRID, tickfont=dict(size=10)),
-        yaxis=dict(**_GRID, tickfont=dict(size=10), autorange="reversed"),
-    )
-    return fig
-
-
-def _strategy_bars(labels: list[str], values: np.ndarray, title: str,
-                   color: str, highlight_color: str | None = None,
-                   threshold: float = 0.005) -> go.Figure:
-
-    def _s(lbl: str) -> str:
-        return (lbl.replace("No defense", "⚫ Aucune")
-                   .replace("Protect ", "🛡️ ")
-                   .replace("Attack ", "⚔️ "))
-
-    idxs = [i for i, v in enumerate(values) if v > threshold] or list(range(len(values)))
-    lf   = [_s(labels[i]) for i in idxs]
-    vf   = np.array([values[i] for i in idxs])
-    colors = [color] * len(lf)
-    if highlight_color is not None and len(vf):
-        colors[int(np.argmax(vf))] = highlight_color
-
-    fig = go.Figure(go.Bar(
-        x=lf, y=vf,
-        marker=dict(color=colors, opacity=0.82, line=dict(width=0)),
-        text=[f"{v:.1%}" for v in vf],
-        textposition="outside",
-        textfont=dict(size=11, color="#e2e8f0"),
-        hovertemplate="%{x}<br>Probabilité : <b>%{y:.2%}</b><extra></extra>",
-    ))
-    _layout = dict(_PL)
-    fig.update_layout(
-        **_PL,
-        margin=dict(l=50, r=30, t=55, b=50),
-        title=dict(text=title, font=dict(size=14, color="#e2e8f0")),
-        height=340,
-        xaxis=dict(**_GRID, tickfont=dict(size=10)),
-        yaxis=dict(**_GRID, range=[0, min(1.18, vf.max() + 0.18)],
-                   tickformat=".0%", title="Probabilité"),
-        bargap=0.35,
-    )
-    return fig
-
-
-def _comparison_fig(nash_val: float, stack_val: float) -> go.Figure:
-    gain = stack_val - nash_val
-    fig  = go.Figure()
-    for name, val, color, pattern in [
-        ("Nash<br><sub style='font-size:10px'>(simultané)</sub>",       nash_val,  C_NASH,  "/"),
-        ("Stackelberg<br><sub style='font-size:10px'>(leader)</sub>",   stack_val, C_STACK, ""),
-    ]:
-        fig.add_trace(go.Bar(
-            name=name.split("<br>")[0], x=[name], y=[val],
-            marker=dict(color=color, opacity=0.82),
-            width=0.38,
-            text=[f"<b>{val:.3f}</b>"], textposition="outside",
-            textfont=dict(size=14, color="#e2e8f0", family="JetBrains Mono"),
-        ))
-
-    if abs(gain) > 0.05:
-        y_annot = max(nash_val, stack_val) + abs(max(nash_val, stack_val)) * 0.22 + 1.5
-        fig.add_annotation(
-            x=1, y=y_annot,
-            text=f"<b>🏆 Gain leadership<br>+{gain:.3f}</b>",
-            showarrow=True, arrowhead=2, arrowcolor=C_STACK,
-            font=dict(color=C_STACK, size=11),
-            bgcolor="rgba(0,255,136,0.08)", bordercolor=C_STACK,
-            borderwidth=1, borderpad=8, xref="x", yref="y",
-        )
-
-    fig.add_hline(y=0, line_dash="dot", line_color="rgba(255,255,255,0.18)")
-    _layout = dict(_PL)
-    fig.update_layout(
-        **_PL,
-        margin=dict(l=50, r=30, t=55, b=50),
-        title=dict(text="⚖️ Nash vs Stackelberg — Payoff du défenseur",
-                   font=dict(size=15, color="#e2e8f0")),
-        height=440,
-        yaxis=dict(**_GRID, title="Payoff défenseur"),
-        showlegend=True,
-        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)",
-                    font=dict(color="#94a3b8")),
-        barmode="group", bargap=0.28,
-    )
-    return fig
-
-
-def _impact_fig(game: Game) -> go.Figure:
-    names   = [n.name for n in game.nodes]
-    impacts = [game.compute_attack_impact(n) for n in names]
-    pairs   = sorted(zip(impacts, names), reverse=True)
-    simp, snam = zip(*pairs)
-
-    bar_col = [C_ATT if i == 0 else f"rgba(0,212,255,{0.35 + 0.1 * (len(snam) - i) / len(snam)})"
-               for i in range(len(snam))]
-
-    fig = go.Figure(go.Bar(
-        x=list(reversed(list(simp))),
-        y=list(reversed(list(snam))),
-        orientation="h",
-        marker=dict(color=list(reversed(bar_col)), opacity=0.85),
-        text=[f"<b>{v:.2f}</b>" for v in reversed(list(simp))],
-        textposition="outside",
-        textfont=dict(size=11, color="#e2e8f0"),
-        hovertemplate="%{y}<br>Impact : <b>%{x:.2f}</b><extra></extra>",
-    ))
-    fig.update_layout(
-        **_PL,
-        margin=dict(l=30, r=60, t=55, b=40),
-        title=dict(text="💥 Impact d'attaque par nœud (direct + latéral)",
-                   font=dict(size=14, color="#e2e8f0")),
-        height=280 + len(names) * 22,
-        xaxis=dict(**_GRID, title="Impact total"),
-        yaxis=dict(**_GRID),
-    )
-    return fig
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CACHED SOLVERS  (cache_data hashes numpy array content)
-# ══════════════════════════════════════════════════════════════════════════════
-
-@st.cache_data(show_spinner=False)
-def _nash(m_def: np.ndarray) -> NashResult:
-    return compute_nash(m_def)
 
 
 @st.cache_data(show_spinner=False)
-def _stackelberg(m_def: np.ndarray, m_att: np.ndarray) -> StackelbergResult:
+def _solve_nash(game_hash: str, _game: Game):
+    solver = NashSolver(_game)
+    return solver.solve(), solver
+
+@st.cache_data(show_spinner=False)
+def _solve_stack(game_hash: str, m_def: np.ndarray, m_att: np.ndarray):
     return compute_stackelberg(m_def, m_att)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# GAME BUILDERS
-# ══════════════════════════════════════════════════════════════════════════════
-
-@st.cache_data(show_spinner=False)
-def _predefined_game(key: str, dr: float, lf: float) -> Game:
-    scen = next(s for s in Game.get_scenarios() if s.key == key)
-    return Game(
-        nodes=scen.game.nodes,
-        edges=scen.game.edges,
-        defense_success_rate=dr,
-        lateral_movement_factor=lf,
-    )
-
-
-def _custom_game(nodes_json: str, dr: float, lf: float) -> Game:
-    nd = json.loads(nodes_json)
-    nodes = [
-        Node(
-            name=n["name"],
-            attack_value=float(n["value"]),
-            defense_cost=float(n["dcost"]),
-            vulnerability=float(n["vuln"]),
-            attack_cost=float(n.get("acost", 0.0)),
-            criticality=float(n.get("crit", 1.0)),
-        )
-        for n in nd
-    ]
-    return Game(nodes=nodes, defense_success_rate=dr, lateral_movement_factor=lf)
+def get_game_hash(game: Game) -> str:
+    return f"{len(game.nodes)}_{len(game.edges)}_{game.defender_budget}_{game.attacker_budget}_{game.defense_success_rate}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -626,594 +456,895 @@ def _custom_game(nodes_json: str, dr: float, lf: float) -> Game:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
-    st.markdown(f"""
-<div class="sb-logo">
-<div style="font-size:2.2rem">🛡️</div>
-<h2>GT-SecurityNet</h2>
-<p>Game Theory · Network Security</p>
+    st.markdown("""
+<div class="sidebar-brand">
+    <div style="font-size:2rem">🛡</div>
+    <h1>GT-SecurityNetwork</h1>
+    <p>Game Theory · Network Security</p>
 </div>
 """, unsafe_allow_html=True)
 
-    # ── Scenario selector ────────────────────────────────────────────────────
-    st.markdown("#### 🎮 Scénario")
-    SCENARIO_OPTS = {
-        "critical-db":       "🗄️  Base de données critique",
-        "balanced-network":  "⚖️  Réseau équilibré",
-        "limited-attacker":  "🔒 Attaquant limité",
-        "custom":            "🔧 Jeu personnalisé",
-    }
-    selected = st.selectbox(
-        "Choisir un scénario",
-        options=list(SCENARIO_OPTS.keys()),
-        format_func=lambda k: SCENARIO_OPTS[k],
-        index=list(SCENARIO_OPTS.keys()).index(st.session_state.scenario_key),
-    )
-    st.session_state.scenario_key = selected
-
-    if selected != "custom":
-        scen_meta = {s.key: s for s in Game.get_scenarios()}
-        if selected in scen_meta:
-            st.info(f"ℹ️ {scen_meta[selected].description}", icon=None)
+    st.markdown("#### Ajouter un nœud")
+    c1, c2 = st.columns(2)
+    with c1:
+        new_name = st.text_input("Nom", placeholder="Ex: Web", label_visibility="collapsed")
+    with c2:
+        new_val = st.number_input("Valeur", 1, 100, 50, label_visibility="collapsed")
+    new_crit = st.checkbox("Nœud critique", key="new_crit")
+    if st.button("Ajouter le nœud", use_container_width=True):
+        if new_name and new_name not in st.session_state.network_nodes:
+            st.session_state.network_nodes[new_name] = {
+                "value": new_val, "critical": new_crit, "type": "custom"
+            }
+            st.rerun()
+        else:
+            st.error("Nom vide ou déjà existant.")
 
     st.markdown("---")
+    st.markdown("#### Budgets stratégiques")
+    st.session_state.attacker_budget = st.slider(
+        "Budget Attaquant (nœuds max)", 1, 4,
+        st.session_state.attacker_budget,
+        help="Nombre de nœuds que l'attaquant peut cibler simultanément"
+    )
+    st.session_state.defender_budget = st.slider(
+        "Budget Défenseur (nœuds max)", 1, 4,
+        st.session_state.defender_budget,
+        help="Nombre de nœuds que le défenseur peut protéger simultanément"
+    )
+    if st.session_state.defender_budget > 3 or st.session_state.attacker_budget > 3:
+        st.warning("Budgets élevés peuvent ralentir les calculs.")
 
-    # ── Game parameters ──────────────────────────────────────────────────────
-    with st.expander("⚙️ Paramètres globaux", expanded=True):
-        dr = st.slider(
-            "🛡️ Taux de succès défense",
-            0.50, 1.00, st.session_state.defense_rate, 0.01,
-            help="Fraction de l'impact neutralisée quand le nœud est protégé",
-        )
-        lf = st.slider(
-            "🌊 Propagation latérale",
-            0.00, 0.50, st.session_state.lateral_factor, 0.01,
-            help="Fraction de l'impact transmise aux nœuds voisins via les arêtes",
-        )
-        st.session_state.defense_rate   = dr
-        st.session_state.lateral_factor = lf
+    st.markdown("---")
+    st.markdown("#### Gérer les nœuds")
+    if st.session_state.network_nodes:
+        node_sel = st.selectbox("Nœud", list(st.session_state.network_nodes.keys()))
+        c3, c4 = st.columns(2)
+        with c3:
+            if st.button("Supprimer", use_container_width=True):
+                del st.session_state.network_nodes[node_sel]
+                st.rerun()
+        with c4:
+            new_v = st.number_input(
+                "Valeur", 1, 100,
+                st.session_state.network_nodes[node_sel]["value"],
+                key="edit_v", label_visibility="collapsed"
+            )
+            if st.button("Modifier", use_container_width=True):
+                st.session_state.network_nodes[node_sel]["value"] = new_v
+                st.rerun()
 
-    # ── Custom node editor ───────────────────────────────────────────────────
-    if selected == "custom":
-        st.markdown("---")
-        st.markdown("#### 🔧 Éditeur de nœuds")
-
-        updated_nodes: list[dict] = []
-        for i, nd in enumerate(st.session_state.custom_nodes):
-            with st.expander(f"**Nœud {i + 1} : {nd['name']}**", expanded=(i == 0)):
-                c1, c2 = st.columns(2)
-                name  = c1.text_input("Nom", nd["name"],  key=f"cn_{i}")
-                value = c2.number_input("Valeur attaque", 1.0, 50.0, float(nd["value"]), 0.5, key=f"cv_{i}")
-                c3, c4 = st.columns(2)
-                dcost = c3.number_input("Coût défense", 0.1, 15.0, float(nd["dcost"]), 0.1, key=f"cd_{i}")
-                vuln  = c4.slider("Vulnérabilité", 0.1, 1.0, float(nd["vuln"]), 0.05, key=f"vu_{i}")
-                updated_nodes.append({"name": name, "value": value, "dcost": dcost,
-                                      "vuln": vuln, "acost": nd.get("acost", 0.0),
-                                      "crit": nd.get("crit", 1.0)})
-
-        ca, cr = st.columns(2)
-        if ca.button("➕ Ajouter", width="content") and len(updated_nodes) < 6:
-            n = len(updated_nodes) + 1
-            updated_nodes.append({"name": f"Node{n}", "value": 6.0, "dcost": 1.5,
-                                   "vuln": 0.8, "acost": 0.8, "crit": 1.0})
-        if cr.button("➖ Supprimer", width="content") and len(updated_nodes) > 2:
-            updated_nodes.pop()
-        st.session_state.custom_nodes = updated_nodes
+    if st.button("Réinitialiser le réseau", use_container_width=True):
+        st.session_state.network_nodes = {
+            'Serveur Principal': {'value': 100, 'critical': True,  'type': 'server'},
+            'Base de Données':   {'value': 90,  'critical': True,  'type': 'database'},
+            'DNS':               {'value': 80,  'critical': True,  'type': 'dns'},
+            'Firewall':          {'value': 95,  'critical': True,  'type': 'firewall'},
+            'Routeur':           {'value': 70,  'critical': False, 'type': 'router'},
+            'Switch':            {'value': 60,  'critical': False, 'type': 'switch'},
+            'Poste Admin':       {'value': 85,  'critical': True,  'type': 'workstation'},
+            'Serveur Backup':    {'value': 75,  'critical': False, 'type': 'server'},
+        }
+        st.rerun()
 
     st.markdown("---")
     st.markdown(
-        '<p style="color:#334155;font-size:.72rem;text-align:center">'
-        "Projet GT · Sécurité Réseau · 2024</p>",
-        unsafe_allow_html=True,
+        '<p style="color:#8792a2;font-size:.72rem;text-align:center">'
+        'Projet Théorie des Jeux ·2025-2026</p>',
+        unsafe_allow_html=True
     )
 
-
 # ══════════════════════════════════════════════════════════════════════════════
-# BUILD GAME + SOLVE
+# BUILD GAME & SOLVE
 # ══════════════════════════════════════════════════════════════════════════════
 
-game: Game | None = None
-game_error: str | None = None
+game = build_game()
+game_hash = get_game_hash(game)
 
-try:
-    if st.session_state.scenario_key == "custom":
-        nodes_json = json.dumps(st.session_state.custom_nodes)
-        game = _custom_game(nodes_json, st.session_state.defense_rate, st.session_state.lateral_factor)
-    else:
-        game = _predefined_game(
-            st.session_state.scenario_key,
-            st.session_state.defense_rate,
-            st.session_state.lateral_factor,
-        )
-except Exception as e:
-    game_error = f"Impossible de construire le jeu : {e}"
-
-if game_error or game is None:
-    st.error(f"❌ {game_error}")
-    st.stop()
-
-try:
-    with st.spinner("🧮 Calcul des équilibres en cours…"):
-        M_def = game.get_payoff_matrix()
-        M_att = game.get_attacker_payoff_matrix()
-        nash  = _nash(M_def)
-        stack = _stackelberg(M_def, M_att)
-except Exception as e:
-    st.error(f"❌ Erreur solveur : {e}")
-    st.stop()
+with st.spinner("Calcul des équilibres..."):
+    nash_result, nash_solver = _solve_nash(game_hash, game)
+    M_def = game.get_payoff_matrix()
+    M_att = game.get_attacker_payoff_matrix()
+    stack_result = _solve_stack(game_hash, M_def, M_att)
+    optimal_payoff, _ = nash_solver.optimal_centralized()
+    poa = nash_solver.price_of_anarchy(optimal_payoff)
 
 def_labels = game.get_defense_labels()
 att_labels  = game.get_attack_labels()
-best_node   = game.nodes[stack.attacker_best_response]
 
+attack_strategies = game.get_attack_labels()
+best_resp_label = (attack_strategies[stack_result.attacker_best_response]
+                   if stack_result.attacker_best_response < len(attack_strategies)
+                   else f"Stratégie {stack_result.attacker_best_response}")
+
+leadership_gain = stack_result.defender_payoff - nash_result.defender_payoff
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HERO HEADER
+# PAGE HEADER
 # ══════════════════════════════════════════════════════════════════════════════
 
-scenario_title = (
-    {s.key: s.title for s in Game.get_scenarios()}.get(st.session_state.scenario_key)
-    or "Jeu personnalisé"
-)
-
-st.markdown(f"""
-<div class="hero-wrap">
-    <div class="hero-title">🛡️ GT-SecurityNetwork</div>
-    <div class="hero-sub">Théorie des Jeux · Optimisation de la Sécurité Réseau</div>
-    <div class="hero-scenario">{SCENARIO_OPTS[st.session_state.scenario_key]}</div>
+st.markdown("""
+<div class="page-header">
+    <div class="page-title">GT-SecurityNetwork</div>
+    <div class="page-sub">Optimisation de la Sécurité Réseau par la Théorie des Jeux</div>
 </div>
 """, unsafe_allow_html=True)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TOP METRICS ROW
-# ══════════════════════════════════════════════════════════════════════════════
-
-leadership_gain = stack.defender_payoff - nash.game_value
-gain_pct        = (leadership_gain / abs(nash.game_value) * 100) if nash.game_value != 0 else 0.0
+# KPI row
+total_value = sum(info['value'] for info in st.session_state.network_nodes.values())
+gain_pct = (leadership_gain / abs(nash_result.defender_payoff) * 100) if nash_result.defender_payoff != 0 else 0
 
 st.markdown(f"""
-<div class="metric-grid">
-  <div class="m-card" style="--accent:linear-gradient(90deg,#00d4ff,#0099bb)">
-    <div class="m-icon">🏢</div>
-    <div class="m-label">Nœuds réseau</div>
-    <div class="m-value">{len(game.nodes)}</div>
+<div class="kpi-row">
+  <div class="kpi-card" style="--accent:#3b82f6">
+    <div class="kpi-label">Nœuds réseau</div>
+    <div class="kpi-value blue">{len(game.nodes)}</div>
   </div>
-  <div class="m-card" style="--accent:linear-gradient(90deg,#7c3aed,#a78bfa)">
-    <div class="m-icon">🛡️</div>
-    <div class="m-label">Actions défense</div>
-    <div class="m-value">{len(game.defense_actions)}</div>
+  <div class="kpi-card" style="--accent:#8b5cf6">
+    <div class="kpi-label">Valeur du jeu (Nash)</div>
+    <div class="kpi-value">{nash_result.defender_payoff:.2f}</div>
   </div>
-  <div class="m-card" style="--accent:linear-gradient(90deg,#a78bfa,#7c3aed)">
-    <div class="m-icon">🎯</div>
-    <div class="m-label">Valeur jeu (Nash)</div>
-    <div class="m-value" style="color:#a78bfa;text-shadow:0 0 20px rgba(124,58,237,.5)">{nash.game_value:.2f}</div>
+  <div class="kpi-card" style="--accent:#10b981">
+    <div class="kpi-label">Gain leadership</div>
+    <div class="kpi-value green">+{leadership_gain:.2f}</div>
   </div>
-  <div class="m-card" style="--accent:linear-gradient(90deg,#00ff88,#00cc6a)">
-    <div class="m-icon">🏆</div>
-    <div class="m-label">Gain leadership</div>
-    <div class="m-value" style="color:#00ff88;text-shadow:0 0 20px rgba(0,255,136,.5)">+{leadership_gain:.2f}</div>
+  <div class="kpi-card" style="--accent:#f59e0b">
+    <div class="kpi-label">Prix de l'Anarchie</div>
+    <div class="kpi-value amber">{poa:.3f}</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "🌐  Réseau",
-    "📊  Matrice",
-    "🎯  Nash",
-    "👑  Stackelberg",
-    "⚖️  Comparaison",
+tabs = st.tabs([
+    "Réseau",
+    "Matrice",
+    "Nash",
+    "Stackelberg",
+    "Pareto",
+    "Comparaison",
+    "Simulation",
+    "État de l'art",
 ])
 
+tab_net, tab_mat, tab_nash, tab_stack, tab_pareto, tab_comp, tab_sim, tab_sota = tabs
 
 # ────────────────────────────────────────────────────────────────────────────
 # TAB 1 — RÉSEAU
 # ────────────────────────────────────────────────────────────────────────────
-with tab1:
-    st.markdown('<div class="sec-title">🌐 Topologie du réseau</div>', unsafe_allow_html=True)
+with tab_net:
+    st.markdown('<div class="sec-title">Topologie du réseau</div>', unsafe_allow_html=True)
 
-    col_net, col_sim = st.columns([5, 3])
+    col_g, col_s = st.columns([3, 2])
 
-    with col_sim:
-        st.markdown(f"""
-<div class="card blue">
-<b>🎮 Simulateur d'attaque</b>
-<p style="color:#64748b;font-size:.88rem;margin:.4rem 0 0">
-Choisissez un nœud attaqué et une action de défense pour voir
-l'impact et le payoff en temps réel.
-</p>
-</div>
-""", unsafe_allow_html=True)
+    with col_g:
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
 
-        node_names   = [n.name for n in game.nodes]
-        node_sim     = st.selectbox("⚔️ Nœud attaqué", ["(aucun)"] + node_names, key="sim_node")
-        def_sim      = st.selectbox("🛡️ Action de défense", def_labels, key="sim_def")
+        G = nx.Graph()
+        for node, info in st.session_state.network_nodes.items():
+            G.add_node(node, value=info['value'], critical=info['critical'])
 
-        attacked_sim = None if node_sim == "(aucun)" else node_sim
-        sel_action   = next((a for a in game.defense_actions if a.name == def_sim), None)
-        protected_sim = list(sel_action.protected_nodes) if sel_action else []
+        node_names_list = list(st.session_state.network_nodes.keys())
+        conn_map_vis = [
+            ('Serveur Principal', 'Base de Données'),
+            ('Serveur Principal', 'DNS'),
+            ('Serveur Principal', 'Firewall'),
+            ('Firewall',          'Routeur'),
+            ('Firewall',          'Poste Admin'),
+            ('Routeur',           'Switch'),
+            ('Base de Données',   'Serveur Backup'),
+            ('DNS',               'Routeur'),
+        ]
+        for src, tgt in conn_map_vis:
+            if src in node_names_list and tgt in node_names_list:
+                G.add_edge(src, tgt)
 
-        if attacked_sim and sel_action:
-            impact       = game.compute_attack_impact(attacked_sim)
-            a_idx        = game.defense_actions.index(sel_action)
-            n_idx        = node_names.index(attacked_sim)
-            payoff_cell  = M_def[a_idx, n_idx]
-            ip           = sel_action.protects(attacked_sim)
-            residual     = (1.0 - game.defense_success_rate) if ip else 1.0
-            damage       = impact * residual
+        if G.number_of_edges() == 0:
+            for i in range(len(node_names_list) - 1):
+                G.add_edge(node_names_list[i], node_names_list[i + 1])
 
-            defended_badge = (
-                f'<span class="badge b-green">🛡️ -{(1-residual):.0%} dégâts</span>'
-                if ip else
-                '<span class="badge b-red">⚠️ Non protégé</span>'
-            )
-            st.markdown(f"""
-            <div class="card {'green' if ip else 'red'}">
-                <b>📊 Résultat de la simulation</b><br><br>
-                <span class="badge b-red">⚔️ {attacked_sim}</span>
-                {defended_badge}<br><br>
-                Impact brut&nbsp;: <b>{impact:.2f}</b><br>
-                Dommage réel&nbsp;: <b>{damage:.2f}</b><br>
-                Coût défense&nbsp;: <b>{sel_action.cost:.2f}</b><br>
-                <b>Payoff défenseur&nbsp;: {payoff_cell:.2f}</b>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-<div class="card">
-<p style="color:#475569;font-size:.88rem;margin:0">
-👆 Sélectionnez un nœud et une action pour lancer la simulation.
-</p>
-</div>
-""", unsafe_allow_html=True)
+        node_colors = ['#ef4444' if st.session_state.network_nodes[n]['critical']
+                       else '#3b82f6' for n in G.nodes()]
 
-    with col_net:
-        fig_net = _network_fig(game, protected=protected_sim, attacked=attacked_sim)
-        st.plotly_chart(fig_net, width="stretch", config={"displayModeBar": False})
+        fig_net, ax_net = plt.subplots(figsize=(10, 7), facecolor='white')
+        pos = nx.spring_layout(G, k=2.5, seed=42, iterations=100)
+        node_sizes = [600 + st.session_state.network_nodes[n]['value'] * 20 for n in G.nodes()]
+        nx.draw(G, pos, node_color=node_colors, node_size=node_sizes,
+                font_size=8, font_weight='bold', edge_color='#cbd5e1',
+                width=2, ax=ax_net, alpha=0.92, with_labels=False)
+        labels_vis = {n: f"{n}\n{st.session_state.network_nodes[n]['value']}" for n in G.nodes()}
+        nx.draw_networkx_labels(G, pos, labels_vis, font_size=8, font_weight='bold', ax=ax_net)
+        legend_items = [
+            mpatches.Patch(color='#ef4444', label='Nœud critique'),
+            mpatches.Patch(color='#3b82f6', label='Nœud standard'),
+        ]
+        ax_net.legend(handles=legend_items, loc='upper left', fontsize=8, framealpha=0.9)
+        ax_net.set_title("Topologie du réseau", fontsize=13, fontweight='bold', pad=15)
+        ax_net.axis('off')
+        plt.tight_layout()
+        st.pyplot(fig_net, use_container_width=True)
+        plt.close()
 
-    # Impact chart + node table
-    st.markdown('<div class="sec-title">💥 Impact d\'attaque par nœud</div>', unsafe_allow_html=True)
-    col_imp, col_tab = st.columns([3, 2])
-
-    with col_imp:
-        st.plotly_chart(_impact_fig(game), width="stretch", config={"displayModeBar": False})
-
-    with col_tab:
-        node_df = pd.DataFrame([
+    with col_s:
+        st.markdown('<div class="sec-title">Nœuds</div>', unsafe_allow_html=True)
+        nodes_df = pd.DataFrame([
             {
-                "🖥️ Nœud":         n.name,
-                "💰 Valeur":        n.attack_value,
-                "🛡️ Coût déf.":    n.defense_cost,
-                "⚠️ Vuln.":         f"{n.vulnerability:.0%}",
-                "📌 Criticité":     n.criticality,
-                "💥 Impact":        f"{game.compute_attack_impact(n.name):.2f}",
+                'Nœud': node,
+                'Valeur': info['value'],
+                'Critique': 'Oui' if info['critical'] else 'Non',
+                'Impact': f"{game.compute_attack_impact(node):.2f}",
             }
-            for n in sorted(game.nodes, key=lambda x: -game.compute_attack_impact(x.name))
-        ])
-        st.dataframe(node_df, width="stretch", hide_index=True, height=300)
+            for node, info in st.session_state.network_nodes.items()
+        ]).sort_values('Valeur', ascending=False)
+        st.dataframe(nodes_df, use_container_width=True, hide_index=True, height=350)
 
+    st.markdown('<div class="sec-title">Impact d\'attaque par nœud</div>', unsafe_allow_html=True)
+    node_names_sorted = sorted(
+        game.nodes, key=lambda n: game.compute_attack_impact(n.name), reverse=True
+    )
+    impacts = [game.compute_attack_impact(n.name) for n in node_names_sorted]
+    colors_impact = [C_ATT if i == 0 else C_DEF for i in range(len(node_names_sorted))]
+
+    fig_imp = go.Figure(go.Bar(
+        x=impacts,
+        y=[n.name for n in node_names_sorted],
+        orientation='h',
+        marker=dict(color=colors_impact, opacity=0.82),
+        text=[f"{v:.2f}" for v in impacts],
+        textposition='outside',
+        hovertemplate="%{y}<br>Impact : <b>%{x:.2f}</b><extra></extra>",
+    ))
+    fig_imp.update_layout(
+        **_PL, height=300, margin=dict(l=20, r=60, t=30, b=20),
+        xaxis=dict(**_GRID, title="Impact total"),
+        yaxis=dict(**_GRID),
+    )
+    st.plotly_chart(fig_imp, use_container_width=True, config={"displayModeBar": False})
 
 # ────────────────────────────────────────────────────────────────────────────
-# TAB 2 — MATRICE DE PAYOFF
+# TAB 2 — MATRICE
 # ────────────────────────────────────────────────────────────────────────────
-with tab2:
-    st.markdown('<div class="sec-title">📊 Matrice de Payoff</div>', unsafe_allow_html=True)
+with tab_mat:
+    st.markdown('<div class="sec-title">Matrice de payoff</div>', unsafe_allow_html=True)
 
-    col_info, col_toggle = st.columns([4, 1])
-    with col_toggle:
-        mode = st.radio("Vue", ["Défenseur", "Attaquant"], horizontal=False, key="matrix_mode")
-    with col_info:
-        st.markdown(f"""
+    mode = st.radio("Afficher", ["Payoff Défenseur", "Payoff Attaquant"], horizontal=True)
+    mat  = M_def if mode == "Payoff Défenseur" else M_att
+
+    def _shorten(lbl: str) -> str:
+        return lbl.replace("No defense", "Aucune").replace("Protect ", "Def: ").replace("Attack ", "Att: ")
+
+    r_short = [_shorten(l) for l in def_labels]
+    c_short = [_shorten(l) for l in att_labels]
+    text2d  = [[f"{mat[i,j]:.2f}" for j in range(mat.shape[1])] for i in range(mat.shape[0])]
+
+    fig_heat = go.Figure(go.Heatmap(
+        z=mat, x=c_short, y=r_short,
+        text=text2d, texttemplate="<b>%{text}</b>",
+        colorscale=[[0, "#fef2f2"], [0.4, "#fde68a"], [0.7, "#bbf7d0"], [1, "#059669"]],
+        showscale=True,
+        hovertemplate="Défense : %{y}<br>Attaque : %{x}<br>Payoff : <b>%{z:.3f}</b><extra></extra>",
+        colorbar=dict(title=dict(text="Utilité", font=dict(size=11)),
+                      tickfont=dict(size=10), len=0.85),
+    ))
+    fig_heat.update_layout(
+        **_PL,
+        height=max(380, mat.shape[0] * 38 + 120),
+        margin=dict(l=30, r=30, t=50, b=50),
+        xaxis=dict(**_GRID, tickfont=dict(size=9)),
+        yaxis=dict(**_GRID, tickfont=dict(size=9), autorange="reversed"),
+        title=dict(text=f"Matrice de payoff — {mode}",
+                   font=dict(size=14, color="#90bde6")),
+    )
+    st.plotly_chart(fig_heat, use_container_width=True, config={"displayModeBar": False})
+
+    with st.expander("Données brutes (CSV)"):
+    # Convertir en array numpy puis en DataFrame simple
+        df_simple = pd.DataFrame(mat)
+        df_simple.index = [f"S{i}" for i in range(mat.shape[0])]
+        df_simple.columns = [f"A{j}" for j in range(mat.shape[1])]
+    
+        st.dataframe(df_simple, height=300)
+    
+    # Pour le téléchargement, garder les vrais noms
+        df_full = pd.DataFrame(mat, index=def_labels, columns=att_labels)
+        st.download_button("Télécharger CSV (noms complets)", df_full.to_csv().encode(), "payoff_matrix.csv", "text/csv")
+        st.caption("📊 Matrice affichée avec indices simplifiés (S0,S1... = stratégies défense, A0,A1... = stratégies attaque)")
+# ────────────────────────────────────────────────────────────────────────────
+# TAB 3 — NASH
+# ────────────────────────────────────────────────────────────────────────────
+with tab_nash:
+    st.markdown('<div class="sec-title">Equilibre de Nash — Stratégies mixtes</div>', unsafe_allow_html=True)
+
+    st.markdown("""
 <div class="card blue">
-La <b>matrice de payoff</b> représente l'utilité pour chaque combinaison
-<em>(action de défense, nœud ciblé)</em>.<br>
-🟩 <b>Vert</b> → bon pour le défenseur &nbsp;|&nbsp;
-🟥 <b>Rouge</b> → perte élevée pour le défenseur.
+<b>Principe</b> — Dans un équilibre de Nash en stratégies mixtes, aucun joueur ne peut
+améliorer son espérance de gain en déviant unilatéralement.
+Les deux joueurs choisissent <b>simultanément</b> et aléatoirement selon des distributions de probabilité.
+Calculé par <b>Programmation Linéaire (minimax — von Neumann 1928)</b>.
 </div>
 """, unsafe_allow_html=True)
 
-    if mode == "Défenseur":
-        mat   = M_def
-        title = "📊 Payoff du Défenseur  (lignes = défense · colonnes = attaque)"
-    else:
-        mat   = M_att
-        title = "📊 Payoff de l'Attaquant  (lignes = défense · colonnes = attaque)"
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Payoff garanti (défenseur)", f"{nash_result.defender_payoff:.4f}")
+    c2.metric("Payoff garanti (attaquant)",  f"{nash_result.attacker_payoff:.4f}")
+    c3.metric("Convergence LP", "Oui" if nash_result.converged else "Non")
 
-    st.plotly_chart(
-        _heatmap_fig(mat, def_labels, att_labels, title),
-        width="stretch", config={"displayModeBar": False},
-    )
+    def _bar_fig(labels, values, title, color, highlight):
+        mask = np.array(values) > 0.005
+        lf   = [l for l, m in zip(labels, mask) if m]
+        vf   = np.array([v for v, m in zip(values, mask) if m])
+        if len(vf) == 0:
+            lf, vf = labels[:3], np.array(values[:3])
+        cols = [color] * len(lf)
+        if len(vf):
+            cols[int(np.argmax(vf))] = highlight
 
-    with st.expander("📋 Données brutes & export CSV"):
-        df_mat = pd.DataFrame(mat, index=def_labels, columns=att_labels)
-        st.dataframe(
-            df_mat.style.format("{:.3f}").background_gradient(cmap="RdYlGn"),
-            height=320,
+        fig = go.Figure(go.Bar(
+            x=lf, y=vf,
+            marker=dict(color=cols, opacity=0.82),
+            text=[f"{v:.1%}" for v in vf],
+            textposition="outside",
+            hovertemplate="%{x}<br>Probabilité : <b>%{y:.2%}</b><extra></extra>",
+        ))
+        fig.update_layout(
+            **_PL, height=320, margin=dict(l=40, r=20, t=50, b=80),
+            title=dict(text=title, font=dict(size=13, color="#90bde6")),
+            xaxis=dict(**_GRID, tickfont=dict(size=9), tickangle=-30),
+            yaxis=dict(**_GRID, range=[0, min(1.25, vf.max() + 0.2)],
+                       tickformat=".0%", title="Probabilité"),
+            bargap=0.35,
         )
-        st.download_button(
-            "⬇️ Télécharger CSV",
-            df_mat.to_csv().encode(),
-            "payoff_matrix.csv",
-            "text/csv",
+        return fig
+
+    cd, ca = st.columns(2)
+    with cd:
+        st.plotly_chart(
+            _bar_fig(def_labels, nash_result.defender_strategy,
+                     "Stratégie mixte — Défenseur",
+                     "rgba(59,130,246,0.7)", C_DEF),
+            use_container_width=True, config={"displayModeBar": False}
+        )
+    with ca:
+        st.plotly_chart(
+            _bar_fig(att_labels, nash_result.attacker_strategy,
+                     "Stratégie mixte — Attaquant",
+                     "rgba(239,68,68,0.7)", C_ATT),
+            use_container_width=True, config={"displayModeBar": False}
         )
 
-
-# ────────────────────────────────────────────────────────────────────────────
-# TAB 3 — NASH EQUILIBRIUM
-# ────────────────────────────────────────────────────────────────────────────
-with tab3:
-    st.markdown('<div class="sec-title">🎯 Équilibre de Nash — Stratégies Mixtes</div>',
-                unsafe_allow_html=True)
-
+    top_def = def_labels[int(np.argmax(nash_result.defender_strategy))]
+    top_att = att_labels[int(np.argmax(nash_result.attacker_strategy))]
     st.markdown(f"""
 <div class="card purple">
-<b>🎯 Principe de l'équilibre de Nash</b><br>
-Dans un équilibre de Nash en <b>stratégies mixtes</b>, aucun joueur ne peut
-augmenter son espérance de gain en changeant <em>unilatéralement</em> sa stratégie.
-Les deux joueurs décident <b>simultanément</b> et de façon aléatoire.
-Ce Nash est calculé par <b>Programmation Linéaire (minimax — von Neumann 1928)</b>.
+<b>Lecture du résultat</b><br>
+Le défenseur joue prioritairement <span class="badge b-blue">{top_def}</span>
+à <b>{nash_result.defender_strategy[int(np.argmax(nash_result.defender_strategy))]:.1%}</b>.<br>
+L'attaquant cible prioritairement <span class="badge b-red">{top_att.replace("Attack ","")}</span>
+à <b>{nash_result.attacker_strategy[int(np.argmax(nash_result.attacker_strategy))]:.1%}</b>.<br>
+<b>Propriété d'indifférence :</b> toute action dans le support donne exactement
+le même espérance de payoff V = {nash_result.defender_payoff:.3f}.
 </div>
 """, unsafe_allow_html=True)
-
-    # Metrics
-    nash_def_exp = float(nash.defender_strategy @ M_def @ nash.attacker_strategy)
-    nash_att_exp = float(nash.defender_strategy @ M_att @ nash.attacker_strategy)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("🎯 Valeur du jeu V",     f"{nash.game_value:.4f}",
-              help="Payoff garanti au défenseur à l'équilibre (minimax = maximin)")
-    c2.metric("🛡️ Espérance défenseur", f"{nash_def_exp:.4f}",
-              help="Payoff attendu du défenseur avec les stratégies Nash")
-    c3.metric("⚔️ Espérance attaquant", f"{nash_att_exp:.4f}",
-              help="Payoff attendu de l'attaquant avec les stratégies Nash")
-
-    # Charts
-    col_d, col_a = st.columns(2)
-    with col_d:
-        st.plotly_chart(
-            _strategy_bars(def_labels, nash.defender_strategy,
-                           "🛡️ Stratégie mixte — Défenseur",
-                           "rgba(0,212,255,0.65)", C_DEF),
-            width="stretch", config={"displayModeBar": False},
-        )
-    with col_a:
-        st.plotly_chart(
-            _strategy_bars(att_labels, nash.attacker_strategy,
-                           "⚔️ Stratégie mixte — Attaquant",
-                           "rgba(239,68,68,0.65)", C_ATT),
-            width="stretch", config={"displayModeBar": False},
-        )
-
-    # Interpretation
-    top_def_i = int(np.argmax(nash.defender_strategy))
-    top_att_j = int(np.argmax(nash.attacker_strategy))
-    st.markdown(f"""
-<div class="card blue">
-<b>🔍 Interprétation</b><br><br>
-Le défenseur joue prioritairement
-<span class="badge b-blue">{def_labels[top_def_i]}</span>
-à <b>{nash.defender_strategy[top_def_i]:.1%}</b>.<br>
-L'attaquant cible prioritairement
-<span class="badge b-red">{att_labels[top_att_j].replace("Attack ", "")}</span>
-à <b>{nash.attacker_strategy[top_att_j]:.1%}</b>.<br><br>
-<b>Propriété d'indifférence :</b> À l'équilibre, toute action dans le support
-(probabilité > 0) donne exactement le même espérance de payoff V = {nash.game_value:.3f}.
-</div>
-""", unsafe_allow_html=True)
-
-    with st.expander("📋 Probabilités détaillées"):
-        tc1, tc2 = st.columns(2)
-        with tc1:
-            st.markdown("**Défenseur**")
-            df_d = pd.DataFrame({
-                "Action": def_labels,
-                "Probabilité": [f"{v:.4f}" for v in nash.defender_strategy],
-            }).sort_values("Probabilité", ascending=False)
-            st.dataframe(df_d, width="stretch", hide_index=True)
-        with tc2:
-            st.markdown("**Attaquant**")
-            df_a = pd.DataFrame({
-                "Nœud cible": att_labels,
-                "Probabilité": [f"{v:.4f}" for v in nash.attacker_strategy],
-            }).sort_values("Probabilité", ascending=False)
-            st.dataframe(df_a, width="stretch", hide_index=True)
-
 
 # ────────────────────────────────────────────────────────────────────────────
 # TAB 4 — STACKELBERG
 # ────────────────────────────────────────────────────────────────────────────
-with tab4:
-    st.markdown('<div class="sec-title">👑 Jeu de Stackelberg — Défenseur Leader</div>',
-                unsafe_allow_html=True)
+with tab_stack:
+    st.markdown('<div class="sec-title">Jeu de Stackelberg — Défenseur Leader</div>', unsafe_allow_html=True)
 
     st.markdown(f"""
 <div class="card green">
-<b>👑 Principe du jeu de Stackelberg</b><br>
-Le défenseur (<b>leader</b>) annonce et s'engage dans sa stratégie mixte
-<em>avant</em> que l'attaquant ne choisisse.
-L'attaquant (<b>follower</b>) observe cet engagement et choisit la
-<b>meilleure réponse pure</b> qui maximise son propre gain.
+<b>Principe</b> — Le défenseur (leader) s'engage publiquement dans une stratégie mixte
+avant que l'attaquant (follower) choisisse. L'attaquant observe cet engagement
+et choisit la <b>meilleure réponse pure</b>.
 Le défenseur anticipe cette réaction et optimise son engagement en conséquence.<br><br>
-🎯 Best response de l'attaquant :
-<span class="badge b-red">⚔️ {best_node.name}</span>
-(impact total : <b>{game.compute_attack_impact(best_node.name):.2f}</b>)
+Best response de l'attaquant : <span class="badge b-red">{best_resp_label.replace('Attack ','')}</span>
 </div>
 """, unsafe_allow_html=True)
 
-    # Metrics
-    gain4 = stack.defender_payoff - nash.game_value
     c1, c2, c3 = st.columns(3)
-    c1.metric("👑 Payoff défenseur",  f"{stack.defender_payoff:.4f}",
-              delta=f"+{gain4:.4f} vs Nash")
-    c2.metric("⚔️ Payoff attaquant",  f"{stack.attacker_payoff:.4f}")
-    c3.metric("🎯 Best response",      best_node.name)
+    c1.metric("Payoff défenseur (Stackelberg)", f"{stack_result.defender_payoff:.4f}",
+              delta=f"+{leadership_gain:.4f} vs Nash")
+    c2.metric("Payoff attaquant (Stackelberg)", f"{stack_result.attacker_payoff:.4f}")
+    c3.metric("Best response attaquant", best_resp_label.replace("Attack ", ""))
 
-    # Strategy chart + explanation
-    col_sc, col_se = st.columns([5, 3])
-    with col_sc:
-        st.plotly_chart(
-            _strategy_bars(def_labels, stack.defender_strategy,
-                           "🛡️ Engagement optimal du Défenseur (Stackelberg)",
-                           "rgba(0,255,136,0.65)", C_STACK),
-            width="stretch", config={"displayModeBar": False},
-        )
-    with col_se:
-        top_stack_i = int(np.argmax(stack.defender_strategy))
-        st.markdown(f"""
+    top_stack = def_labels[int(np.argmax(stack_result.defender_strategy))]
+    fig_stack = go.Figure(go.Bar(
+        x=[l for l, v in zip(def_labels, stack_result.defender_strategy) if v > 0.005],
+        y=[v for v in stack_result.defender_strategy if v > 0.005],
+        marker=dict(color="rgba(16,185,129,0.75)"),
+        text=[f"{v:.1%}" for v in stack_result.defender_strategy if v > 0.005],
+        textposition="outside",
+        hovertemplate="%{x}<br>Probabilité : <b>%{y:.2%}</b><extra></extra>",
+    ))
+    fig_stack.update_layout(
+        **_PL, height=320, margin=dict(l=40, r=20, t=50, b=80),
+        title=dict(text="Engagement optimal du défenseur (Stackelberg)",
+                   font=dict(size=13, color="#90bde6")),
+        xaxis=dict(**_GRID, tickfont=dict(size=9), tickangle=-30),
+        yaxis=dict(**_GRID, tickformat=".0%", title="Probabilité"),
+        bargap=0.35,
+    )
+    st.plotly_chart(fig_stack, use_container_width=True, config={"displayModeBar": False})
+
+    st.markdown(f"""
 <div class="card green">
-<b>🔍 Lecture du résultat</b><br><br>
-L'engagement dominant du défenseur est<br>
-<span class="badge b-green">{def_labels[top_stack_i]}</span>
-à <b>{stack.defender_strategy[top_stack_i]:.1%}</b>.<br><br>
-En voyant cet engagement, l'attaquant choisit de façon <b>déterministe</b>
-le nœud <span class="badge b-red">⚔️ {best_node.name}</span>
-car c'est sa meilleure réponse pure.
+L'engagement dominant est <span class="badge b-green">{top_stack}</span>
+à <b>{stack_result.defender_strategy[int(np.argmax(stack_result.defender_strategy))]:.1%}</b>.
+En observant cet engagement, l'attaquant choisit de façon déterministe
+<span class="badge b-red">{best_resp_label.replace('Attack ','')}</span>.
 </div>
 """, unsafe_allow_html=True)
 
-        df_stk = pd.DataFrame({
-            "Action défense": def_labels,
-            "Probabilité": stack.defender_strategy,
-        })
-        df_stk = df_stk[df_stk["Probabilité"] > 0.001].sort_values(
-            "Probabilité", ascending=False)
-        df_stk["Probabilité"] = df_stk["Probabilité"].map("{:.4f}".format)
-        st.dataframe(df_stk, width="stretch", hide_index=True)
+# ────────────────────────────────────────────────────────────────────────────
+# TAB 5 — PARETO
+# ────────────────────────────────────────────────────────────────────────────
+with tab_pareto:
+    st.markdown('<div class="sec-title">Frontière de Pareto & Efficacité Sociale</div>', unsafe_allow_html=True)
 
-    # Attacked node details
-    st.markdown('<div class="sec-title">⚔️ Nœud ciblé par l\'attaquant</div>', unsafe_allow_html=True)
-    ca1, ca2, ca3, ca4, ca5 = st.columns(5)
-    ca1.metric("🏷️ Nœud",          best_node.name)
-    ca2.metric("💰 Valeur",         best_node.attack_value)
-    ca3.metric("⚠️ Vulnérabilité",   f"{best_node.vulnerability:.0%}")
-    ca4.metric("📌 Criticité",       best_node.criticality)
-    ca5.metric("💥 Impact total",    f"{game.compute_attack_impact(best_node.name):.2f}")
+    st.markdown("""
+<div class="card amber">
+<b>Principe</b> — Une allocation (payoff_défenseur, payoff_attaquant) est <b>Pareto-optimale</b>
+si aucune autre allocation ne permet d'améliorer le payoff d'un joueur sans détériorer celui de l'autre.
+La frontière de Pareto représente l'ensemble de ces allocations efficaces.
+Un équilibre de Nash éloigné de cette frontière révèle un <b>coût de l'égoïsme</b>.
+</div>
+""", unsafe_allow_html=True)
 
+    pareto_result = compute_pareto(
+        M_def, M_att, def_labels, att_labels,
+        nash_def_payoff=nash_result.defender_payoff,
+        nash_att_payoff=nash_result.attacker_payoff,
+        stack_def_payoff=stack_result.defender_payoff,
+        stack_att_payoff=stack_result.attacker_payoff,
+    )
+
+    # Scatter plot : tous les points + frontière de Pareto
+    all_x = [p.defender_payoff for p in pareto_result.all_points]
+    all_y = [p.attacker_payoff for p in pareto_result.all_points]
+    all_text = [f"Def: {p.defense_action}<br>Att: {p.attack_strategy}" for p in pareto_result.all_points]
+
+    front_x = [p.defender_payoff for p in pareto_result.frontier]
+    front_y = [p.attacker_payoff for p in pareto_result.frontier]
+    front_text = [f"Def: {p.defense_action}<br>Att: {p.attack_strategy}" for p in pareto_result.frontier]
+
+    fig_pareto = go.Figure()
+
+    # Tous les points
+    fig_pareto.add_trace(go.Scatter(
+        x=all_x, y=all_y,
+        mode='markers',
+        marker=dict(color='#cbd5e1', size=6, opacity=0.6),
+        name='Allocations possibles',
+        hovertext=all_text,
+        hoverinfo='text',
+    ))
+
+    # Frontière de Pareto
+    fig_pareto.add_trace(go.Scatter(
+        x=front_x, y=front_y,
+        mode='markers+lines',
+        marker=dict(color=C_PARETO, size=9, symbol='diamond'),
+        line=dict(color=C_PARETO, width=2, dash='dot'),
+        name='Frontière de Pareto',
+        hovertext=front_text,
+        hoverinfo='text',
+    ))
+
+    # Point Nash
+    fig_pareto.add_trace(go.Scatter(
+        x=[nash_result.defender_payoff],
+        y=[nash_result.attacker_payoff],
+        mode='markers+text',
+        marker=dict(color=C_NASH, size=14, symbol='star'),
+        text=["Nash"],
+        textposition="top right",
+        textfont=dict(size=11, color=C_NASH),
+        name='Nash Equilibrium',
+    ))
+
+    # Point Stackelberg
+    fig_pareto.add_trace(go.Scatter(
+        x=[stack_result.defender_payoff],
+        y=[stack_result.attacker_payoff],
+        mode='markers+text',
+        marker=dict(color=C_STACK, size=14, symbol='star'),
+        text=["Stackelberg"],
+        textposition="top right",
+        textfont=dict(size=11, color=C_STACK),
+        name='Stackelberg',
+    ))
+
+    # Point optimal centralisé
+    fig_pareto.add_trace(go.Scatter(
+        x=[optimal_payoff],
+        y=[0],
+        mode='markers+text',
+        marker=dict(color='#90bde6', size=12, symbol='x'),
+        text=["Optimal centralisé"],
+        textposition="top right",
+        textfont=dict(size=10, color='#90bde6'),
+        name='Optimal centralisé',
+    ))
+
+    fig_pareto.update_layout(
+        **_PL,
+        height=500,
+        margin=dict(l=60, r=30, t=60, b=60),
+        title=dict(text="Frontière de Pareto — Espace des payoffs",
+                   font=dict(size=14, color="#e2e8f0")),
+        xaxis=dict(**_GRID, title="Payoff défenseur"),
+        yaxis=dict(**_GRID, title="Payoff attaquant"),
+    )
+    st.plotly_chart(fig_pareto, use_container_width=True, config={"displayModeBar": False})
+
+    # Métriques Pareto
+    eff_score = pareto_efficiency_score(pareto_result.frontier, pareto_result.nash_point)
+    cp1, cp2, cp3 = st.columns(3)
+    cp1.metric("Points Pareto-optimaux", len(pareto_result.frontier))
+    cp2.metric("Distance Nash → frontière", f"{eff_score:.4f}")
+    cp3.metric("Allocations totales", len(pareto_result.all_points))
+
+    st.markdown(f"""
+<div class="card amber">
+<b>Interprétation</b><br>
+La frontière de Pareto contient <b>{len(pareto_result.frontier)} allocations Pareto-optimales</b>
+sur {len(pareto_result.all_points)} possibles.<br>
+La distance du Nash à la frontière est <b>{eff_score:.4f}</b> — 
+{"Nash est quasi-Pareto-optimal (efficacité sociale élevée)." if eff_score < 1.0 else "Nash est éloigné de la frontière (coût de l'égoïsme significatif)."}
+</div>
+""", unsafe_allow_html=True)
+
+    with st.expander("Points de la frontière de Pareto"):
+        df_front = pd.DataFrame([
+            {
+                "Action de défense": p.defense_action,
+                "Stratégie d'attaque": p.attack_strategy,
+                "Payoff défenseur": f"{p.defender_payoff:.4f}",
+                "Payoff attaquant": f"{p.attacker_payoff:.4f}",
+            }
+            for p in pareto_result.frontier
+        ])
+        st.dataframe(df_front, use_container_width=True, hide_index=True)
 
 # ────────────────────────────────────────────────────────────────────────────
-# TAB 5 — COMPARISON
+# TAB 6 — COMPARAISON
 # ────────────────────────────────────────────────────────────────────────────
-with tab5:
-    st.markdown('<div class="sec-title">⚖️ Nash vs Stackelberg — Analyse Comparative</div>',
-                unsafe_allow_html=True)
+with tab_comp:
+    st.markdown('<div class="sec-title">Comparaison Nash / Stackelberg / Optimal centralisé</div>', unsafe_allow_html=True)
 
-    # Summary cards
-    c_n, c_s, c_g = st.columns(3)
+    c_n, c_s, c_o = st.columns(3)
     with c_n:
         st.markdown(f"""
 <div class="card purple" style="text-align:center">
-<div style="font-size:1.8rem">🎯</div>
-<b>Nash — Simultané</b><br>
-<div style="font-size:2.2rem;font-weight:800;color:#a78bfa;
-font-family:'JetBrains Mono',monospace;margin:.3rem 0">
-{nash.game_value:.3f}
-</div>
-<div style="color:#475569;font-size:.82rem">Valeur garantie du jeu</div>
+<div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.08em;color:#8b5cf6;font-weight:700">Nash</div>
+<div style="font-size:2rem;font-weight:700;color:#90bde6;font-family:'DM Mono',monospace;margin:0.5rem 0">
+{nash_result.defender_payoff:.3f}</div>
+<div style="font-size:0.78rem;color:#8792a2">Jeu simultané — garanti</div>
 </div>
 """, unsafe_allow_html=True)
     with c_s:
         st.markdown(f"""
 <div class="card green" style="text-align:center">
-<div style="font-size:1.8rem">👑</div>
-<b>Stackelberg — Leader</b><br>
-<div style="font-size:2.2rem;font-weight:800;color:#00ff88;
-font-family:'JetBrains Mono',monospace;margin:.3rem 0">
-{stack.defender_payoff:.3f}
-</div>
-<div style="color:#475569;font-size:.82rem">Payoff en tant que leader</div>
+<div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.08em;color:#10b981;font-weight:700">Stackelberg</div>
+<div style="font-size:2rem;font-weight:700;color:#90bde6;font-family:'DM Mono',monospace;margin:0.5rem 0">
+{stack_result.defender_payoff:.3f}</div>
+<div style="font-size:0.78rem;color:#8792a2">Leader séquentiel</div>
 </div>
 """, unsafe_allow_html=True)
-    with c_g:
+    with c_o:
         st.markdown(f"""
-<div class="card amber" style="text-align:center">
-<div style="font-size:1.8rem">🏆</div>
-<b>Gain du Leadership</b><br>
-<div style="font-size:2.2rem;font-weight:800;color:#fbbf24;
-font-family:'JetBrains Mono',monospace;margin:.3rem 0">
-+{leadership_gain:.3f}
-</div>
-<div style="color:#475569;font-size:.82rem">+{gain_pct:.1f}% de performance</div>
+<div class="card blue" style="text-align:center">
+<div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.08em;color:#3b82f6;font-weight:700">Optimal centralisé</div>
+<div style="font-size:2rem;font-weight:700;color:#90bde6;font-family:'DM Mono',monospace;margin:0.5rem 0">
+{optimal_payoff:.3f}</div>
+<div style="font-size:0.78rem;color:#8792a2">Minimax pur — planner central</div>
 </div>
 """, unsafe_allow_html=True)
 
-    # Comparison bar chart
-    st.plotly_chart(_comparison_fig(nash.game_value, stack.defender_payoff),
-                    width="stretch", config={"displayModeBar": False})
+    fig_comp = go.Figure()
+    for name, val, color in [
+        ("Nash<br>(simultané)",        nash_result.defender_payoff, C_NASH),
+        ("Stackelberg<br>(leader)",    stack_result.defender_payoff, C_STACK),
+        ("Optimal<br>centralisé",      optimal_payoff, C_DEF),
+    ]:
+        fig_comp.add_trace(go.Bar(
+            name=name.replace("<br>", " "),
+            x=[name], y=[val],
+            marker=dict(color=color, opacity=0.82),
+            width=0.35,
+            text=[f"<b>{val:.3f}</b>"],
+            textposition="outside",
+            textfont=dict(size=13, color="#90bde6"),
+        ))
 
-    # Side-by-side strategy comparison
-    st.markdown('<div class="sec-title">🛡️ Stratégies du Défenseur — Côte à Côte</div>',
-                unsafe_allow_html=True)
-    cc1, cc2 = st.columns(2)
-    with cc1:
-        st.plotly_chart(
-            _strategy_bars(def_labels, nash.defender_strategy,
-                           "Nash — Stratégie mixte",
-                           "rgba(124,58,237,0.65)", C_NASH),
-            width="stretch", config={"displayModeBar": False},
-        )
-    with cc2:
-        st.plotly_chart(
-            _strategy_bars(def_labels, stack.defender_strategy,
-                           "Stackelberg — Engagement optimal",
-                           "rgba(0,255,136,0.65)", C_STACK),
-            width="stretch", config={"displayModeBar": False},
-        )
+    fig_comp.update_layout(
+    **_PL, height=420,
+    margin=dict(l=50, r=30, t=60, b=50),
+    title=dict(text="Payoff défenseur — Comparaison des solutions",
+               font=dict(size=14, color="#90bde6")),
+    yaxis=dict(**_GRID, title="Payoff défenseur"),
+    barmode="group", bargap=0.28,
+    legend=dict(bgcolor="#1a1d26", bordercolor="#334155", font=dict(color="#e2e8f0")),
+    )
+    st.plotly_chart(fig_comp, use_container_width=True, config={"displayModeBar": False})
 
-    # Narrative
-    top_def_nash  = def_labels[int(np.argmax(nash.defender_strategy))]
-    top_def_stack = def_labels[int(np.argmax(stack.defender_strategy))]
-    top_att_nash  = att_labels[int(np.argmax(nash.attacker_strategy))].replace("Attack ", "")
+    gain_pct_str = f"+{gain_pct:.1f}%" if gain_pct >= 0 else f"{gain_pct:.1f}%"
+    poa_loss = (poa - 1) * 100 if poa > 1 else 0
 
     st.markdown(f"""
 <div class="card blue">
-<b>📖 Ce que cet outil apporte vs une défense naïve</b><br><br>
-
-<b>Défense naïve</b> : protéger toujours le même nœud
-(ex. toujours <em>{att_labels[0].replace("Attack ","")}</em>) sans stratégie mixte.
-L'attaquant peut alors s'adapter et exploiter les nœuds non protégés
-pour un gain maximal.<br><br>
-
-<b>Nash (stratégies mixtes)</b> : le défenseur randomise ses actions selon
-<span class="badge b-purple">{top_def_nash} ({nash.defender_strategy[int(np.argmax(nash.defender_strategy))]:.1%})</span>
-L'attaquant répond en ciblant
-<span class="badge b-red">⚔️ {top_att_nash} ({np.max(nash.attacker_strategy):.1%})</span>.
-Valeur garantie : <b>{nash.game_value:.3f}</b>.<br><br>
-
-<b>Stackelberg (leader)</b> : en s'engageant publiquement dans
-<span class="badge b-green">{top_def_stack} ({stack.defender_strategy[int(np.argmax(stack.defender_strategy))]:.1%})</span>,
-le défenseur provoque une best response pure de l'attaquant vers
-<span class="badge b-red">⚔️ {best_node.name}</span>.
-Payoff réalisé : <b>{stack.defender_payoff:.3f}</b>
-— soit <b>+{leadership_gain:.3f}</b> de mieux qu'en Nash.<br><br>
-
-<b>🔑 Conclusion :</b> la théorie des jeux permet de dépasser
-une défense intuitive ou fixe, et de quantifier précisément l'avantage
-stratégique d'agir en premier (<em>first-mover advantage</em>).
+<b>Synthèse comparative</b><br><br>
+<b>Nash (simultané) :</b> le défenseur randomise ses actions pour garantir {nash_result.defender_payoff:.3f},
+rendant l'attaquant indifférent entre ses stratégies.<br><br>
+<b>Stackelberg (leader) :</b> en s'engageant publiquement, le défenseur obtient {stack_result.defender_payoff:.3f}
+— soit {gain_pct_str} de mieux qu'en Nash. C'est l'avantage du <i>first-mover</i>.<br><br>
+<b>Optimal centralisé :</b> sans contrainte stratégique, un planificateur central atteindrait {optimal_payoff:.3f}.
+Le prix de l'anarchie est {poa:.3f} — le comportement égoïste coûte {poa_loss:.1f}% d'efficacité.
 </div>
 """, unsafe_allow_html=True)
 
-    with st.expander("📚 Rappel des concepts théoriques"):
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
+# ────────────────────────────────────────────────────────────────────────────
+# TAB 7 — SIMULATION DE CONVERGENCE
+# ────────────────────────────────────────────────────────────────────────────
+with tab_sim:
+    st.markdown('<div class="sec-title">Simulation de convergence vers l\'équilibre</div>', unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="card blue">
+<b>Principe (3.2)</b> — On simule des tours de jeu répétés où chaque joueur tire
+son action selon sa stratégie mixte Nash. Le payoff moyen cumulé doit converger
+vers la valeur théorique de l'équilibre. Cette simulation vérifie empiriquement
+le théorème minimax.
+</div>
+""", unsafe_allow_html=True)
+
+    cs1, cs2 = st.columns([1, 2])
+    with cs1:
+        n_turns = st.number_input("Nombre de tours", 10, 2000, 300, step=50)
+        run_sim = st.button("Lancer la simulation", use_container_width=True)
+
+    if run_sim:
+        simulator = GameSimulator(game, nash_result)
+        with st.spinner(f"Simulation de {n_turns} tours..."):
+            simulator.play_multiple_turns(n_turns)
+            conv_data = simulator.get_convergence_data()
+
+        st.success(f"Simulation terminée — {n_turns} tours joués.")
+
+        tours = conv_data['tours']
+        payoff_cumul = conv_data['payoff_cumul']
+        nash_value   = conv_data['nash_value']
+
+        # ── Courbe de convergence du payoff
+        fig_conv = go.Figure()
+        fig_conv.add_trace(go.Scatter(
+            x=tours, y=payoff_cumul,
+            mode='lines',
+            name='Payoff moyen cumulé',
+            line=dict(color=C_DEF, width=2),
+        ))
+        fig_conv.add_hline(
+            y=nash_value,
+            line_dash="dash",
+            line_color=C_NASH,
+            annotation_text=f"Valeur Nash théorique ({nash_value:.3f})",
+            annotation_position="bottom right",
+            annotation_font=dict(size=11, color=C_NASH),
+        )
+        fig_conv.update_layout(
+            **_PL, height=380,
+            margin=dict(l=60, r=30, t=50, b=50),
+            title=dict(text="Convergence du payoff moyen vers la valeur Nash",
+                       font=dict(size=14, color="#90bde6")),
+            xaxis=dict(**_GRID, title="Nombre de tours"),
+            yaxis=dict(**_GRID, title="Payoff moyen cumulé"),
+            legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#e4e7ef"),
+        )
+        st.plotly_chart(fig_conv, use_container_width=True, config={"displayModeBar": False})
+
+        # ── Convergence des fréquences défenseur
+        def_freq_data = conv_data['def_freq_over_time']
+        fig_def_conv = go.Figure()
+        for idx, label in enumerate(nash_result.defender_labels):
+            theo = nash_result.defender_strategy[idx]
+            if theo > 0.01:
+                fig_def_conv.add_trace(go.Scatter(
+                    x=tours, y=def_freq_data[:, idx].tolist(),
+                    mode='lines', name=label[:25],
+                    line=dict(width=1.5, dash='solid'),
+                ))
+                fig_def_conv.add_hline(
+                    y=theo, line_dash="dot", line_width=1, opacity=0.5,
+                    annotation_text=f"{theo:.2f}", annotation_font_size=9,
+                )
+
+        fig_def_conv.update_layout(
+            **_PL, height=340,
+            margin=dict(l=60, r=30, t=50, b=50),
+            title=dict(text="Convergence des fréquences défenseur vers les probabilités Nash",
+                       font=dict(size=13, color="#90bde6")),
+            xaxis=dict(**_GRID, title="Tours"),
+            yaxis=dict(**_GRID, title="Fréquence cumulée", range=[-0.05, 1.05]),
+        )
+        st.plotly_chart(fig_def_conv, use_container_width=True, config={"displayModeBar": False})
+
+        # ── Vérification de convergence
+        conv_check = simulator.convergence_check()
+        if isinstance(conv_check, dict):
             st.markdown(f"""
-#### 🎯 Nash (von Neumann, 1928)
-- Jeu simultané à somme nulle
-- Chaque joueur **randomise** ses actions
-- Aucun n'a intérêt à dévier unilatéralement
-- Calculé par LP minimax / maximin
-- Valeur unique garantie par le **Théorème Minimax**
-- Formule LP : max V s.t. M^T·p ≥ V·1, Σp=1, p≥0
-""")
-        with col_t2:
-            st.markdown(f"""
-#### 👑 Stackelberg (von Stackelberg, 1934)
-- Jeu séquentiel leader-follower
-- Défenseur s'engage **publiquement** en premier
-- Attaquant choisit la **best response pure**
-- Défenseur anticipe et optimise sous cette contrainte
-- Propriété fondamentale : **Payoff Stackelberg ≥ Nash**
-- Calculé par LP pour chaque best response candidate j*
-""")
+<div class="card {'green' if conv_check['converged'] else 'amber'}">
+<b>Vérification de convergence</b><br>
+Erreur fréquences défenseur : <b>{conv_check['defender_error']:.4f}</b><br>
+Erreur fréquences attaquant : <b>{conv_check['attacker_error']:.4f}</b><br>
+{"Les fréquences convergent vers l'équilibre de Nash (erreur < 0.1)." if conv_check['converged']
+ else "Convergence partielle — augmenter le nombre de tours pour améliorer la précision."}
+</div>
+""", unsafe_allow_html=True)
+
+        with st.expander("Historique des tours"):
+            st.dataframe(pd.DataFrame(simulator.history), use_container_width=True, height=250)
+
+    else:
+        st.info("Configurez le nombre de tours puis cliquez sur 'Lancer la simulation'.")
+
+# ────────────────────────────────────────────────────────────────────────────
+# TAB 8 — ÉTAT DE L'ART
+# ────────────────────────────────────────────────────────────────────────────
+with tab_sota:
+    st.markdown('<div class="sec-title">État de l\'art — Théorie des jeux appliquée aux réseaux</div>', unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="sota-section">
+<h3>Introduction</h3>
+<p>
+La théorie des jeux, formalisée par von Neumann et Morgenstern (1944) puis par Nash (1950),
+fournit un cadre mathématique rigoureux pour modéliser les interactions stratégiques entre
+agents rationnels. Son application aux réseaux de télécommunication et à la cybersécurité
+connaît une croissance significative depuis les années 2000, motivée par la complexité
+croissante des infrastructures et la nécessité d'optimiser des ressources partagées.
+</p>
+</div>
+""", unsafe_allow_html=True)
+
+    col_s1, col_s2 = st.columns(2)
+
+    with col_s1:
+        st.markdown("""
+<div class="sota-section">
+<h3>1. Contrôle de congestion</h3>
+<p>
+Le problème de la congestion dans les réseaux peut être modélisé comme un jeu
+non-coopératif où chaque utilisateur (joueur) cherche à maximiser son débit
+en choisissant son chemin de routage. Roughgarden et Tardos (2002) ont établi
+des bornes sur le <b>prix de l'anarchie</b> (PoA) pour les jeux de routage,
+montrant que l'équilibre de Nash peut être sous-optimal par rapport à l'optimum
+centralisé d'un facteur de 4/3 dans le cas linéaire.
+</p>
+<p>
+Les protocoles TCP peuvent être interprétés comme des algorithmes de jeu distribués
+convergeant vers un équilibre de Nash. Des extensions comme le <b>jeu de Kelly</b>
+permettent d'allouer la bande passante de manière proportionnellement équitable.
+</p>
+</div>
+
+<div class="sota-section">
+<h3>2. Sécurité des réseaux</h3>
+<p>
+La cybersécurité se prête naturellement à une modélisation par la théorie des jeux
+à deux joueurs : défenseur vs. attaquant. Les travaux de Alpcan et Başar (2011)
+ont formalisé le <b>jeu de sécurité réseau</b> comme un jeu stochastique avec
+information incomplète.
+</p>
+<p>
+Les <b>jeux de Stackelberg en sécurité</b> (SSG — Stackelberg Security Games), popularisés
+par Tambe et al. (2011) dans le cadre ARMOR pour la sécurité aéroportuaire, montrent
+que l'engagement public du défenseur améliore systématiquement son payoff par rapport
+à l'équilibre de Nash simultané. Ces travaux ont été appliqués à la protection
+d'infrastructures critiques (ports, centrales électriques, réseaux SCADA).
+</p>
+<p>
+Les modèles de <b>jeux de déception</b> (deception games) intègrent la possibilité
+pour le défenseur de placer des honeypots pour induire l'attaquant en erreur,
+ajoutant une dimension d'information asymétrique.
+</p>
+</div>
+""", unsafe_allow_html=True)
+
+        st.markdown("""
+<div class="sota-section">
+<h3>3. Routage et allocation de ressources</h3>
+<p>
+Le problème du routage dans les réseaux pair-à-pair (P2P) et les réseaux overlay
+a été largement étudié sous l'angle des jeux de potentiel. Chaque nœud, en choisissant
+son chemin de manière égoïste, participe à un jeu dont l'équilibre de Nash correspond
+à la configuration où aucun routeur ne peut améliorer sa latence individuellement.
+</p>
+<p>
+L'allocation de spectre dans les réseaux cognitifs radio modélise la compétition
+entre utilisateurs primaires et secondaires comme un jeu d'enchères, avec des
+mécanismes de Vickrey garantissant la vérité-compatibilité des offres.
+</p>
+</div>
+""", unsafe_allow_html=True)
+
+    with col_s2:
+        st.markdown("""
+<div class="sota-section">
+<h3>4. Réseaux 5G et allocation de puissance</h3>
+<p>
+Dans les réseaux cellulaires multi-cellules, l'allocation de puissance entre
+stations de base concurrentes constitue un jeu non-coopératif. Les travaux de
+Scutari et al. (2008) ont montré que le <b>jeu d'interférence</b> admet un équilibre
+de Nash unique sous des conditions de faible interférence inter-cellulaire.
+</p>
+<p>
+Les réseaux 5G introduisent des jeux de <b>découpage de réseau</b> (network slicing)
+où les opérateurs virtuels (MVNOs) négocient les tranches de ressources via des
+mécanismes d'enchères combinatoires ou des protocoles de négociation multilatérale.
+La formation de coalitions entre stations de base pour le <b>Cloud-RAN</b> relève
+des jeux coopératifs et du calcul du noyau (core).
+</p>
+</div>
+
+<div class="sota-section">
+<h3>5. Formation de coalitions (réseaux de capteurs)</h3>
+<p>
+Dans les réseaux de capteurs sans fil (WSN), les nœuds forment des clusters
+pour optimiser la consommation énergétique. Ce problème est modélisé comme un
+<b>jeu de formation de coalitions</b> (coalition formation game) où l'utilité
+d'un cluster est fonction de sa taille et de la qualité des liens.
+</p>
+<p>
+Le concept de <b>noyau (core)</b> d'un jeu coopératif garantit une partition stable
+des nœuds en clusters où aucun sous-ensemble n'a intérêt à se désolidariser.
+Des algorithmes distribués comme MERGE-SPLIT permettent de converger vers
+une partition dans le noyau sans coordinateur central.
+</p>
+</div>
+
+<div class="sota-section">
+<h3>6. Optimisation centralisée vs décentralisée</h3>
+<p>
+La tension entre optimisation centralisée (planificateur omniscient) et équilibre
+décentralisé (Nash) est quantifiée par le <b>prix de l'anarchie</b> (Price of Anarchy).
+Pour les jeux de sécurité réseau, ce ratio peut être borné analytiquement selon
+la structure de la matrice de payoff.
+</p>
+<p>
+Des mécanismes incitatifs (taxe de Pigou, enchères de Vickrey-Clarke-Groves)
+permettent d'aligner les intérêts individuels sur l'optimum social, réduisant
+le PoA à 1 dans certaines classes de jeux. Le présent simulateur calcule
+ce prix de l'anarchie en comparant le Nash obtenu par LP à la solution
+minimax pure (planificateur central).
+</p>
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="sota-section">
+<h3>Références principales</h3>
+<p>
+— Nash, J. (1950). <i>Equilibrium points in n-person games.</i> PNAS.<br>
+— von Neumann, J. & Morgenstern, O. (1944). <i>Theory of Games and Economic Behavior.</i> Princeton.<br>
+— Roughgarden, T. & Tardos, É. (2002). <i>How bad is selfish routing?</i> JACM.<br>
+— Alpcan, T. & Başar, T. (2011). <i>Network Security: A Decision and Game Theoretic Approach.</i> Cambridge.<br>
+— Tambe, M. (2011). <i>Security and Game Theory.</i> Cambridge University Press.<br>
+— Scutari, G. et al. (2008). <i>Competitive Design of Multiuser MIMO Systems.</i> IEEE Trans. IT.<br>
+— Saad, W. et al. (2009). <i>Coalitional Game Theory for Wireless Networks.</i> IEEE Signal Processing Magazine.
+</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align:center;padding:1.5rem 0;color:#8792a2;font-size:0.78rem'>
+GT-SecurityNetwork · Théorie des Jeux & Optimisation Réseau ·2025-2026
+</div>
+""", unsafe_allow_html=True)
+""
