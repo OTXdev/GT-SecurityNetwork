@@ -608,7 +608,7 @@ tabs = st.tabs([
     "Simulation",
 ])
 
-tab_net, tab_mat, tab_nash, tab_stack, tab_pareto, tab_comp, tab_sim, tab_sota = tabs
+tab_net, tab_mat, tab_nash, tab_stack, tab_pareto, tab_comp, tab_sim = tabs
 
 # ────────────────────────────────────────────────────────────────────────────
 # TAB 1 — RÉSEAU
