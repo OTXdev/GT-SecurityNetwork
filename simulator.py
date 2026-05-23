@@ -66,7 +66,10 @@ class GameSimulator:
         payoffs = [h['payoff_defenseur'] for h in self.history]
         payoff_cumul = np.cumsum(payoffs) / np.arange(1, len(payoffs) + 1)
 
-        nash_value = self.nash_result.defender_payoff
+        M_def = self.game.get_payoff_matrix()
+        nash_value = float(
+            self.nash_result.defender_strategy @ M_def @ self.nash_result.attacker_strategy
+        )
 
         # Fréquences cumulées défenseur
         n_def = len(self.nash_result.defender_labels)
